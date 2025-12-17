@@ -1,0 +1,3047 @@
+---
+title: "Predicting Flood Risk in Sri Lanka: Linear Regression and Generalized Linear Models"
+author: "Miguel Rodríguez Losada (s100568756)"
+output:
+  html_document:
+    toc: true
+    toc_depth: 3
+    toc_float: true
+    number_sections: true
+    theme: cosmo
+    highlight: tango
+  pdf_document:
+    toc: true
+    toc_depth: '3'
+fontsize: 11pt
+geometry: margin=2.5cm
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo       = TRUE,
+  warning    = FALSE,
+  message    = FALSE,
+  fig.align  = "center",
+  fig.width  = 7,
+  fig.height = 5
+)
+
+# Needed packages
+library(tidyverse)
+library(tidymodels)
+library(MASS)
+library(e1071)
+library(janitor)
+library(skimr)
+library(GGally)
+library(broom)
+library(knitr)
+library(kableExtra)
+library(patchwork) 
+library(dplyr)
+library(ggplot2)
+library(lsr)
+library(car)
+library(lmtest)
+library(readr)
+library(rsample)
+library(tibble)
+library(effects)
+library(yardstick)
+
+```
+
+# <span style="color:#1f77b4">First task: Linear Regression</span>
+
+## <span style="color:#1f77b4">Introduction and Motivation</span>
+```{r intro-image,echo=FALSE,out.width="100%"}
+knitr::include_graphics("newsletter_tittle.png")
+```
+
+Extreme flooding has become one of the most pressing environmental challenges
+affecting many countries worldwide. In late 2025, Sri Lanka faced one of the
+most severe flood emergencies in its recent history. As reported by BBC News on
+30 November 2025, the government declared a national state of emergency after
+widespread floods and mudslides displaced thousands of citizens and caused
+significant infrastructure damage. The president described the crisis as the
+“most challenging natural disaster” the country has ever confronted. This event
+drew international attention and highlighted the growing vulnerability of many
+regions to climate-related hazards.
+
+\vspace{0.1cm}
+
+Motivated by this real-world context, this project focuses on studying flood
+risk in Sri Lanka using a rich, multidimensional dataset. The dataset contains
+25,000 geo-referenced observations that combine environmental indicators
+(such as recent rainfall and vegetation indices), terrain characteristics
+(elevation, proximity to rivers), land-use descriptors, demographic density,
+infrastructure quality, and historical flood occurrences. Importantly, it
+provides a continuous flood risk score, which enables quantitative exploration
+of how geographical, environmental, and socio-economic factors jointly shape
+exposure to floods.
+
+\vspace{0.1cm}
+
+The originality of this project lies in connecting a current and socially
+relevant issue with a data-driven risk analysis. Although the dataset is
+simulated, it is constructed using realistic geospatial and environmental
+proxies. This makes it suitable for understanding which features are associated
+with flood-prone areas and for illustrating the usefulness of empirical data in
+the context of disaster preparedness. By focusing on a case that is both timely
+and meaningful, the project aims to provide a thoughtful, evidence-based
+perspective on a problem of growing global significance.
+
+## <span style="color:#1f77b4">The dataset</span>
+
+The dataset used in this project comes from the Kaggle repository 
+**Sri Lanka Flood Risk and Inundation Dataset**, which provides a synthetic but
+realistic geospatial representation of 25,000 locations across Sri Lanka.
+Each observation corresponds to a small spatial unit described by environmental,
+topographic, socio-demographic and infrastructural indicators.
+The table below summarises the definition of all
+variables as reported in the official Kaggle documentation.
+
+```{r dataset-description-table, echo=FALSE}
+
+variables <- tribble(
+  ~Column, ~Type, ~Description,
+  "record_id", "string", "Synthetic unique record id (e.g., F100000).",
+  "district", "string", "Administrative district name (Sri Lanka).",
+  "place_name", "string", "Synthetic town/village name.",
+  "latitude", "float", "WGS84 latitude.",
+  "longitude", "float", "WGS84 longitude.",
+  "elevation_m", "integer", "Elevation above sea level (meters).",
+  "distance_to_river_m", "float", "Distance to nearest river (meters).",
+  "landcover", "string", "Land cover type: Urban, Agriculture, Forest, 
+  Wetland, etc.",
+  "soil_type", "string", "Soil category (Clay, Sandy, Loamy, Peaty, Silty).",
+  "water_supply", "string", "Primary water source (Municipal, Well, Surface, 
+  etc.).",
+  "electricity", "string", "Electricity availability type.",
+  "road_quality", "string", "Road access / quality category.",
+  "population_density_per_km2", "integer", "Population density (people per 
+  km²).",
+  "built_up_percent", "float", "Percent built-up area in the location.",
+  "urban_rural", "string", "Urban / Rural classification.",
+  "rainfall_7d_mm", "float", "Rainfall accumulated over the last 7 days (mm).",
+  "monthly_rainfall_mm", "float", "Monthly accumulated rainfall (mm).",
+  "drainage_index", "float", "Proxy index 0–1 (lower values indicate poorer 
+  drainage).",
+  "ndvi", "float", "Normalized Difference Vegetation Index (−1 to 1).",
+  "ndwi", "float", "Normalized Difference Water Index (−1 to 1).",
+  "water_presence_flag", "string", "Likely / unlikely surface water presence.",
+  "historical_flood_count", "integer", "Number of historical flood events 
+  (synthetic).",
+  "infrastructure_score", "integer", "Composite infrastructure score (0–100).",
+  "nearest_hospital_km", "float", "Distance to nearest hospital (km).",
+  "nearest_evac_km", "float", "Distance to nearest evacuation point (km).",
+  "flood_risk_score", "float", "Derived flood risk score (0–100) combining 
+  features.",
+  "flood_occurrence_current_event", "string", "Yes/No flag for the simulated 
+  current flood event.",
+  "inundation_area_sqm", "integer", "Estimated inundation area in square metres 
+  (0 if not flooded).",
+  "is_good_to_live", "string", "Yes/No recommendation based on risk and 
+  infrastructure.",
+  "reason_not_good_to_live", "string", 
+  "Explanation when is_good_to_live == No.",
+  "is_synthetic", "boolean", "Indicator that the dataset is synthetic.",
+  "generation_date", "date", "Generation timestamp (YYYY-MM-DD)."
+)
+
+variables |>
+  kable("html", align = "lll", 
+        caption = "Description of all dataset variables.") |>
+  kable_styling(full_width = FALSE, bootstrap_options = c("striped", "hover"))
+```
+
+**Note:** The dataset can be accessed at the following URL: https://www.kaggle.com/datasets/dewminimnaadi/sri-lanka-flood-risk-and-inundation-dataset.
+
+
+## <span style="color:#1f77b4">Goal</span>
+
+As established in the preceding sections, the objective of this study is to 
+examine how environmental, geographical, and socio-demographic factors 
+influence the degree of flood exposure across Sri Lanka. To this end, the 
+analysis centres on **predicting the continuous variable `flood_risk_score`**, 
+an index ranging from 0 to 100 that encapsulates the estimated flood risk at 
+each geographic location.
+
+\vspace{0.1cm}
+
+This score is derived from multiple underlying attributes, including recent 
+rainfall patterns, terrain elevation, proximity to rivers, vegetation indices,
+population density, and infrastructure characteristics. By modelling this 
+variable, we aim to identify the most influential predictors of flood risk and 
+to quantify their association with the observed spatial variability.
+
+## <span style="color:#1f77b4">Data Import and Train–Test Split for Linear Regression</span>
+
+To prepare the dataset for the modelling stage, we first load the cleaned CSV
+file and then create an 80/20 train–test split.
+
+\vspace{0.1cm}
+
+For that aim, we rely on the 
+`initial_split()` function from the **tidymodels** package and apply 
+stratification on the response variable (`flood_risk_score`) to ensure that 
+both partitions preserve a similar distribution of the target.
+
+```{r data-loading-split, message=FALSE, warning=FALSE}
+
+# First, we set a seed to ensure reproducibility
+set.seed(123)
+
+# Loading the data
+srilanka <- read_csv("sri_lanka_flood_risk_dataset_25000.csv")
+
+# Obtaining the stratified 80/20 train–test split
+data_split <- initial_split(
+  srilanka,
+  prop   = 0.8,
+  strata = flood_risk_score
+)
+
+# Obtaining Train/Test Data
+TrainData <- training(data_split)
+TestData  <- testing(data_split)
+
+# We can perform a balance verification
+
+tibble(
+  Set = c("Train", "Test"),
+  n = c(nrow(TrainData), nrow(TestData)),
+  mean_risk = c(mean(TrainData$flood_risk_score),
+                mean(TestData$flood_risk_score)),
+  sd_risk = c(sd(TrainData$flood_risk_score),
+              sd(TestData$flood_risk_score))
+)
+
+# Showing a quick overview of the training set
+glimpse(TrainData)
+```
+
+## <span style="color:#1f77b4">Descriptive and Explanatory Analysis</span>
+
+### <span style="color:#1f77b4">Summary statistics and variable types</span> 
+
+In order to understand the structure of the data before fitting any model, we 
+first compute basic summary statistics for all variables in the 
+**training set**. This allows us to obtain an overview of typical values, 
+ranges and potential anomalies for the main features used in the analysis. 
+
+\vspace{0.1cm}
+
+In parallel, we inspect the data types of each column to distinguish between 
+**continuous variables**, **categorical factors** and **boolean indicators**, 
+which will determine how these variables are treated in the subsequent linear 
+regression models.
+
+```{r summary-and-types}
+
+# Basic summary statistics for the training data
+summary(TrainData)
+
+# Variable type table
+var_types <- tibble(
+  Variable = names(TrainData),
+  Type = sapply(TrainData, function(x) class(x)[1])
+)
+
+kable(var_types,
+      caption = "Variable classes in the training dataset",
+      align = "ll",
+      row.names = FALSE) |>
+  kable_styling(full_width = FALSE,
+                bootstrap_options = c("striped", "hover"))
+```
+Overall, the training set consists of 19,998 observations and 32 variables.
+We can extract the following conclusions:
+
+- The summary statistics reveal that the main geographical coordinates `latitude` 
+and `longitude` span relatively narrow ranges, consistently with the spatial 
+extent of Sri Lanka. Terrain elevation `elevation_m` varies from low-lying areas
+close to sea level up to more than 2,100 metres, while `distance_to_river_m` 
+covers a wide interval from locations directly adjacent to rivers to cells more
+than 16 km away. 
+
+- Environmental indicators display substantial variability: recent rainfall 
+`rainfall_7d_mm` ranges from 0 to over 370 mm, monthly rainfall 
+`monthly_rainfall_mm` reaches almost 870 mm, and the indices `ndvi` and `ndwi` 
+cover most of their theoretical support [-1,1], suggesting heterogeneous 
+vegetation and surface-water conditions across the study area.
+
+- Socio-demographic and exposure variables also show marked dispersion. 
+For example, `population_density_per_km2` ranges from sparsely populated cells 
+with only 10 inhabitants per km² to highly dense locations exceeding 3,100 
+inhabitants per km², and `built_up_percent` spans from almost non-developed 
+areas to cells with 95% built-up surface. 
+
+- The variable `inundation_area_sqm` is highly skewed, with many zeros and a 
+few very large values above 300,000 m², which anticipates the need for 
+special treatment if this variable is later analysed.
+
+- The response variable 
+`flood_risk_score` takes values between 0 and 100, with a median around 32 and 
+an upper quartile close to 43, indicating that most locations exhibit low to 
+moderate estimated risk, while high-risk cells are comparatively less frequent.
+
+
+The variable–type table clarifies the structure of the dataset. 
+
+- Most predictors of interest are continuous numeric variables, which are
+naturally suited for inclusion in linear regression models 
+(e.g. `elevation_m`, `distance_to_river_m`, `rainfall_7d_mm`, 
+`monthly_rainfall_mm`, `population_density_per_km2`, 
+`historical_flood_count`, `infrastructure_score`, etc.). 
+
+- A second group comprises categorical variables stored as 
+character strings, such as `district`, `landcover`, `soil_type`, 
+`water_supply`,` electricity`,`road_quality`,etc.
+These must be converted to factors before modelling so that 
+the regression coefficients represent differences between categories. 
+
+- Finally, `is_synthetic` (logical) and `generation_date` (date) play a 
+descriptive or metadata role and will not be used as predictors in the 
+subsequent linear regression analysis.
+
+### <span style="color:#1f77b4">Distribution of the response variable `flood_risk_score`</span> 
+
+Before exploring relationships with the predictors, it is useful to examine the
+marginal distribution of the response variable **`flood_risk_score`** in the
+training set. This helps to identify potential skewness, multimodality or
+extreme values that may influence the behaviour of linear regression models and
+the interpretation of their residuals.
+
+```{r dist-flood-risk-score}
+ggplot(TrainData, aes(x = flood_risk_score)) +
+  geom_density(fill = "skyblue", alpha = 0.6, linewidth = 1) +
+  labs(
+    title = "Distribution of the flood risk score",
+    x = "Flood risk score",
+    y = "Density"
+  ) +
+  theme_minimal(base_size = 13)
+```
+
+The distribution of `flood_risk_score` in the training set exhibits a unimodal
+and approximately bell-shaped pattern, with most observations concentrated 
+between 15 and 45. The density curve peaks around the upper 20s to lower 30s,
+which is consistent with the median of 32.3 reported in the summary statistics.
+The right tail extends gradually toward higher scores, indicating the presence
+of a smaller proportion of locations classified as high-risk (scores above 60). 
+Conversely, very low values close to zero are relatively uncommon, suggesting 
+that few areas are assigned negligible flood risk. Overall, the distribution is 
+only mildly right-skewed and does not display sharp discontinuities or 
+multimodality, making `flood_risk_score` suitable as a continuous response 
+variable for linear modelling.
+
+\vspace{0.1cm}
+
+Given the approximately symmetric and well-behaved distribution of 
+`flood_risk_score`, no transformation of the response variable is required prior
+to fitting linear regression models. This decision may be revisited after 
+inspecting model residuals, but the current distribution does not indicate the 
+need for a logarithmic or Box–Cox transformation.
+
+### <span style="color:#1f77b4">Univariate exploration of numerical predictors</span> 
+
+To explore the marginal behaviour of the most informative numerical predictors, 
+we begin by analysing the distributions of three continuous variables that have 
+a strong theoretical relationship with flood exposure: `elevation_m`, 
+`distance_to_river_m` and `rainfall_7d_mm`. These predictors cover 
+complementary physical dimensions relevant to flood processes:
+
+- `elevation_m` reflects terrain height, which is a primary determinant of 
+  water accumulation. Lower elevations generally correspond to a higher 
+  likelihood of flooding.
+
+- `distance_to_river_m` captures proximity to hydrological networks. 
+  Locations closer to rivers tend to exhibit greater flood susceptibility due 
+  to overflow and channel expansion during heavy rainfall.
+
+- `rainfall_7d_mm` represents short-term precipitation intensity. High recent 
+  rainfall levels increase soil saturation and runoff, amplifying flood risk.
+
+By examining these variables individually, we gain insight into their scale, 
+variability and potential skewness, which helps anticipate how they may 
+influence the performance and assumptions of linear regression models.
+
+```{r univariate-continuous}
+p1 <- ggplot(TrainData, aes(x = elevation_m)) +
+  geom_density(fill = "skyblue", alpha = 0.6, linewidth = 1) +
+  labs(title = "Distribution of elevation",
+       x = "Elevation (m)", y = "Density") +
+  theme_minimal(base_size = 13)
+
+p2 <- ggplot(TrainData, aes(x = distance_to_river_m)) +
+  geom_density(fill = "skyblue", alpha = 0.6, linewidth = 1) +
+  labs(title = "Distribution of distance to nearest river",
+       x = "Distance (m)", y = "Density") +
+  theme_minimal(base_size = 13)
+
+p3 <- ggplot(TrainData, aes(x = rainfall_7d_mm)) +
+  geom_density(fill = "skyblue", alpha = 0.6, linewidth = 1) +
+  labs(title = "Distribution of rainfall over the last 7 days",
+       x = "Rainfall (mm)", y = "Density") +
+  theme_minimal(base_size = 13)
+
+p1; p2; p3
+```
+
+The univariate distributions of the selected continuous predictors reveal 
+markedly different patterns that reflect the underlying physical processes 
+related to flood exposure. 
+
+  - The variable `elevation_m` is highly right-skewed, with the vast majority of 
+locations concentrated at low altitudes, which is consistent with the 
+geographical profile of Sri Lanka. 
+  - In contrast, `distance_to_river_m` decreases sharply near zero,
+indicating that many spatial units lie close to river channels, a factor that 
+may substantially influence flood susceptibility. 
+  - Finally, `rainfall_7d_mm` exhibits a moderately right-skewed distribution, 
+with most observations falling below 150 mm but a non-negligible tail 
+representing intense rainfall events.
+
+### <span style="color:#1f77b4">Univariate exploration of categorical predictors</span> 
+
+To complement the analysis of continuous predictors, we now examine the marginal
+behaviour of three categorical variables that capture relevant land-use and 
+socio-geographical characteristics: `landcover`, `urban_rural` and `soil_type`. 
+These variables describe, respectively, the dominant surface cover of 
+each location, whether the area is classified as urban or rural, and the 
+prevailing soil category. 
+
+\vspace{0.1cm}
+
+All three factors may influence flood dynamics 
+through their effects on infiltration capacity, runoff generation and human
+exposure. For example, impermeable urban surfaces or certain soil types can 
+reduce infiltration and increase surface runoff, whereas vegetated or permeable
+areas may attenuate flood peaks. Understanding the distribution of these 
+categories provides useful context for interpreting their potential 
+contribution to the variability of `flood_risk_score`.
+
+```{r univariate-categorical, fig.width=7, fig.height=4}
+
+p4 <- ggplot(TrainData, aes(x = landcover)) +
+  geom_bar(fill = "skyblue", alpha = 0.7) +
+  labs(
+    title = "Distribution of land-cover categories",
+    x = "Land-cover type",
+    y = "Count"
+  ) +
+  theme_minimal(base_size = 13) +
+  theme(axis.text.x = element_text(angle = 25, hjust = 1))
+
+p5 <- ggplot(TrainData, aes(x = urban_rural)) +
+  geom_bar(fill = "skyblue", alpha = 0.7) +
+  labs(
+    title = "Distribution of urban vs. rural locations",
+    x = "Category",
+    y = "Count"
+  ) +
+  theme_minimal(base_size = 13)
+
+p6 <- ggplot(TrainData, aes(x = soil_type)) +
+  geom_bar(fill = "skyblue", alpha = 0.7) +
+  labs(
+    title = "Distribution of soil_type categories",
+    x = "Soil type",
+    y = "Count"
+  ) +
+  theme_minimal(base_size = 13)
+
+p4; p5; p6
+```
+
+### <span style="color:#1f77b4">Selection of predictors for the regression analysis</span>
+
+Before fitting the linear regression models, it is necessary to identify which 
+variables are appropriate to use as predictors of `flood_risk_score`. Several 
+attributes in the dataset are unsuitable due to conceptual, statistical, or 
+methodological considerations. Below, we explain the rationale for excluding
+specific variables.
+
+- `generation_date`: this is a metadata field describing when each synthetic 
+observation was generated. It contains no geographical or environmental 
+information relevant to flood risk.
+- `is_synthetic`: represents a constant attribute equal to TRUE for all 
+observations. As it lacks variability, it cannot contribute to model estimation.
+- `is_good_to_live` and `reason_not_good_to_live`: these variables represent 
+derived recommendations partly based on flood risk itself. Including them 
+would introduce circularity and bias, as they indirectly encode the target
+variable.
+- `flood_occurrence_current_event`: reflects participation in a 
+simulated current flood event. As it depends on extreme-event conditions rather 
+than long-term risk, including it would distort the modelling of 
+`flood_risk_score`.
+- `inundation_area_sqm`: represents the simulated inundated area for the 
+current event. Its strong dependence on the same mechanisms that generate the 
+risk score makes it unsuitable due to potential data leakage.
+- `longitude` and `latitude`: although spatial position is relevant for flood 
+modelling, raw coordinates introduce a highly non-linear spatial structure that
+is poorly captured by simple linear regression. These variables also risk 
+acting as proxies for unobserved processes, causing unstable and 
+difficult-to-interpret coefficients. 
+- `district`: contains many categories and would require generating a large set 
+of dummy variables. Such encoding increases model complexity, introduces sparse 
+estimations, and may overshadow the effect of meaningful environmental 
+variables.
+
+Moreover, it is important to verify whether any missing values are present 
+among the selected predictors or in the response variable. Detecting and 
+addressing missing data at this stage ensures the integrity of the regression 
+analysis and prevents potential biases or inconsistencies in the model 
+estimates.
+
+
+```{r}
+# List of selected continuous predictors
+vars <- c(
+  "elevation_m",
+  "distance_to_river_m",
+  "rainfall_7d_mm",
+  "monthly_rainfall_mm",
+  "drainage_index",
+  "ndvi",
+  "ndwi",
+  "population_density_per_km2",
+  "built_up_percent",
+  "infrastructure_score",
+  "nearest_hospital_km",
+  "nearest_evac_km",
+  "historical_flood_count"
+)
+
+# Add the response variable to the list
+vars_full <- c(vars, "flood_risk_score")
+
+# Subset the dataset to only the variables of interest
+subset_df <- TrainData[, vars_full]
+
+# Compute missing values for each selected variable
+missing_counts <- sapply(subset_df, function(x) sum(is.na(x)))
+
+# Display the results as a data frame for readability
+missing_table <- data.frame(
+  Variable = names(missing_counts),
+  Missing_Values = missing_counts
+)
+
+missing_table
+```
+
+### <span style="color:#1f77b4">Bivariate exploration of predictors and the response variable</span>
+
+To complement the univariate analysis, we now examine how each predictor 
+relates to the response variable `flood_risk_score`.
+This bivariate exploration is essential for identifying the strength, direction,
+and linearity of potential associations, and for anticipating modelling 
+challenges such as heteroscedasticity or non-linear patterns.
+
+\vspace{0.1cm}
+
+We organise the analysis into two parts:
+
+- **Continuous predictors**: scatterplots with linear smoothing lines allow us 
+to visually assess whether variables such as
+`elevation_m`, `distance_to_river_m`, `rainfall_7d_mm`, etc. display monotonic 
+trends with `flood_risk_score`.
+
+- **Categorical predictors**: predictors such as `landcover`, `soil_type`, 
+`urban_rural`, `water_supply`, etc. are explored using boxplots and 
+distribution comparisons, which reveal whether 
+different categories correspond to systematically higher or lower flood risk.
+
+We begin with environmental predictors that directly influence flood generation 
+mechanisms.
+
+```{r}
+# Custom theme
+custom_theme <- theme_minimal(base_size = 14) +
+  theme(
+    plot.title = element_text(face = "bold", colour = "#003366"),
+    axis.title = element_text(colour = "grey20"),
+    panel.grid.minor = element_blank(),
+    panel.grid.major = element_line(colour = "grey85")
+  )
+
+# Lighter points, darker line
+pt_col     <- "#6baed6"  # light blue for points
+smooth_col <- "#08306b"  # very dark blue for line
+
+p1 <- ggplot(TrainData, aes(x = elevation_m, y = flood_risk_score)) +
+  geom_point(alpha = 0.20, colour = pt_col) +
+  geom_smooth(method = "lm", se = FALSE, colour = smooth_col, linewidth = 1.4) +
+  labs(
+    title = "Elevation vs. flood risk",
+    x = "Elevation (m)",
+    y = "Flood risk score"
+  ) +
+  custom_theme
+
+p2 <- ggplot(TrainData, aes(x = distance_to_river_m, y = flood_risk_score)) +
+  geom_point(alpha = 0.20, colour = pt_col) +
+  geom_smooth(method = "lm", se = FALSE, colour = smooth_col, linewidth = 1.4) +
+  labs(
+    title = "Distance to river vs. flood risk",
+    x = "Distance to nearest river (m)",
+    y = "Flood risk score"
+  ) +
+  custom_theme
+
+p3 <- ggplot(TrainData, aes(x = drainage_index, y = flood_risk_score)) +
+  geom_point(alpha = 0.20, colour = pt_col) +
+  geom_smooth(method = "lm", se = FALSE, colour = smooth_col, linewidth = 1.4) +
+  labs(
+    title = "Drainage index vs. flood risk",
+    x = "Drainage index (0–1)",
+    y = "Flood risk score"
+  ) +
+  custom_theme
+
+(p1 | p2) /
+(p3 | patchwork::plot_spacer())
+```
+
+Rainfall intensity and vegetation indices reflect hydrometeorological and 
+land-surface conditions that strongly modulate the buildup, absorption and
+runoff of water. Therefore, examining their relationships with 
+`flood_risk_score` helps reveal how recent precipitation and surface 
+characteristics contribute to flood exposure patterns.
+
+```{r}
+# Reusing the custom theme and colors defined before
+custom_theme <- theme_minimal(base_size = 14) +
+  theme(
+    plot.title = element_text(face = "bold", colour = "#003366"),
+    axis.title = element_text(colour = "grey20"),
+    panel.grid.minor = element_blank(),
+    panel.grid.major = element_line(colour = "grey85")
+  )
+
+pt_col     <- "#6baed6"  # light blue points
+smooth_col <- "#08306b"  # dark blue regression line
+
+# Rainfall 7 days
+p4 <- ggplot(TrainData, aes(x = rainfall_7d_mm, y = flood_risk_score)) +
+  geom_point(alpha = 0.20, colour = pt_col) +
+  geom_smooth(method = "lm", se = FALSE, colour = smooth_col, linewidth = 1.4) +
+  labs(
+    title = "Rainfall (7d) vs. flood risk",
+    x = "Rainfall in the last 7 days (mm)",
+    y = "Flood risk score"
+  ) +
+  custom_theme
+
+# Monthly Rainfall
+p5 <- ggplot(TrainData, aes(x = monthly_rainfall_mm, y = flood_risk_score)) +
+  geom_point(alpha = 0.20, colour = pt_col) +
+  geom_smooth(method = "lm", se = FALSE, colour = smooth_col, linewidth = 1.4) +
+  labs(
+    title = "Monthly rainfall vs. flood risk",
+    x = "Monthly rainfall (mm)",
+    y = "Flood risk score"
+  ) +
+  custom_theme
+
+# NDVI
+p6 <- ggplot(TrainData, aes(x = ndvi, y = flood_risk_score)) +
+  geom_point(alpha = 0.20, colour = pt_col) +
+  geom_smooth(method = "lm", se = FALSE, colour = smooth_col, linewidth = 1.4) +
+  labs(
+    title = "NDVI vs. flood risk",
+    x = "NDVI (−1 to 1)",
+    y = "Flood risk score"
+  ) +
+  custom_theme
+
+# NDWI
+p7 <- ggplot(TrainData, aes(x = ndwi, y = flood_risk_score)) +
+  geom_point(alpha = 0.20, colour = pt_col) +
+  geom_smooth(method = "lm", se = FALSE, colour = smooth_col, linewidth = 1.4) +
+  labs(
+    title = "NDWI vs. flood risk",
+    x = "NDWI (−1 to 1)",
+    y = "Flood risk score"
+  ) +
+  custom_theme
+
+# Combine into a 2×2 panel
+(p4 | p5) /
+(p6 | p7)
+```
+
+The following panel displays scatterplots for demographic intensity, 
+built-up area, accessibility to emergency services and historical flood counts 
+against the response variable, providing insight into how these 
+socio-environmental factors relate to estimated flood risk.
+
+```{r bivariate-demo-infra, fig.width=10, fig.height=6}
+
+# Reusing the custom theme and colors defined before
+custom_theme <- theme_minimal(base_size = 14) +
+  theme(
+    plot.title = element_text(face = "bold", colour = "#003366"),
+    axis.title = element_text(colour = "grey20"),
+    panel.grid.minor = element_blank(),
+    panel.grid.major = element_line(colour = "grey85")
+  )
+
+pt_col     <- "#6baed6"  # light blue points
+smooth_col <- "#08306b"  # dark blue regression line
+
+# Population density
+p8 <- ggplot(TrainData, aes(x = population_density_per_km2, y = flood_risk_score)) +
+  geom_point(alpha = 0.20, colour = pt_col) +
+  geom_smooth(method = "lm", se = FALSE, colour = smooth_col, linewidth = 1.2) +
+  labs(
+    title = "Population density",
+    x = "People per km²",
+    y = "Flood risk score"
+  ) +
+  custom_theme
+
+# Built-up percent
+p9 <- ggplot(TrainData, aes(x = built_up_percent, y = flood_risk_score)) +
+  geom_point(alpha = 0.20, colour = pt_col) +
+  geom_smooth(method = "lm", se = FALSE, colour = smooth_col, linewidth = 1.2) +
+  labs(
+    title = "Built-up area",
+    x = "Built-up area (%)",
+    y = "Flood risk score"
+  ) +
+  custom_theme
+
+# Infrastructure score
+p10 <- ggplot(TrainData, aes(x = infrastructure_score, y = flood_risk_score)) +
+  geom_point(alpha = 0.20, colour = pt_col) +
+  geom_smooth(method = "lm", se = FALSE, colour = smooth_col, linewidth = 1.2) +
+  labs(
+    title = "Infrastructure score",
+    x = "Score (0–100)",
+    y = "Flood risk score"
+  ) +
+  custom_theme
+
+# Distance to nearest hospital
+p11 <- ggplot(TrainData, aes(x = nearest_hospital_km, y = flood_risk_score)) +
+  geom_point(alpha = 0.20, colour = pt_col) +
+  geom_smooth(method = "lm", se = FALSE, colour = smooth_col, linewidth = 1.2) +
+  labs(
+    title = "Distance to hospital",
+    x = "km",
+    y = "Flood risk score"
+  ) +
+  custom_theme
+
+# Distance to nearest evacuation point
+p12 <- ggplot(TrainData, aes(x = nearest_evac_km, y = flood_risk_score)) +
+  geom_point(alpha = 0.20, colour = pt_col) +
+  geom_smooth(method = "lm", se = FALSE, colour = smooth_col, linewidth = 1.2) +
+  labs(
+    title = "Distance to evacuation pt",
+    x = "km",
+    y = "Flood risk score"
+  ) +
+  custom_theme
+
+# Historical flood count
+p13 <- ggplot(TrainData, aes(x = historical_flood_count, y = flood_risk_score)) +
+  geom_point(alpha = 0.20, colour = pt_col) +
+  geom_smooth(method = "lm", se = FALSE, colour = smooth_col, linewidth = 1.2) +
+  labs(
+    title = "Historical flood count",
+    x = "Number of past floods",
+    y = "Flood risk score"
+  ) +
+  custom_theme
+
+# 3×2 layout
+(p8  | p9  | p10) /
+(p11 | p12 | p13)
+```
+
+Categorical predictors describe qualitative characteristics of each location, 
+such as land use, soil properties or access to basic services. To investigate 
+how these factors relate to `flood_risk_score`, we compare the distribution of
+the response across categories of `landcover`, `soil_type`, `urban_rural`, 
+`water_supply`, `electricity` and `road_quality` using boxplots. These 
+visualisations indicate whether certain classes are systematically associated 
+with higher or lower estimated flood risk.
+
+```{r bivariate-categorical, fig.width=10, fig.height=6}
+custom_theme <- theme_minimal(base_size = 11) +
+  theme(
+    plot.title = element_text(face = "bold", colour = "#003366", size = 11),
+    axis.title = element_text(colour = "grey20"),
+    axis.text.x = element_text(angle = 25, hjust = 1),
+    panel.grid.minor = element_blank(),
+    panel.grid.major = element_line(colour = "grey85")
+  )
+
+box_col <- "#6baed6"
+
+p_cat1 <- ggplot(TrainData, aes(x = landcover, y = flood_risk_score)) +
+  geom_boxplot(fill = box_col, alpha = 0.7, outlier.alpha = 0.4) +
+  labs(title = "Landcover", x = "Land-cover type", y = "Flood risk score") +
+  custom_theme
+
+p_cat2 <- ggplot(TrainData, aes(x = soil_type, y = flood_risk_score)) +
+  geom_boxplot(fill = box_col, alpha = 0.7, outlier.alpha = 0.4) +
+  labs(title = "Soil type", x = "Soil type", y = "Flood risk score") +
+  custom_theme
+
+p_cat3 <- ggplot(TrainData, aes(x = urban_rural, y = flood_risk_score)) +
+  geom_boxplot(fill = box_col, alpha = 0.7, outlier.alpha = 0.4) +
+  labs(title = "Urban vs rural", x = "Category", y = "Flood risk score") +
+  custom_theme
+
+p_cat4 <- ggplot(TrainData, aes(x = water_supply, y = flood_risk_score)) +
+  geom_boxplot(fill = box_col, alpha = 0.7, outlier.alpha = 0.4) +
+  labs(title = "Water supply", x = "Water supply source", y = "Flood risk score") +
+  custom_theme
+
+p_cat5 <- ggplot(TrainData, aes(x = electricity, y = flood_risk_score)) +
+  geom_boxplot(fill = box_col, alpha = 0.7, outlier.alpha = 0.4) +
+  labs(title = "Electricity", x = "Electricity availability", y = "Flood risk score") +
+  custom_theme
+
+p_cat6 <- ggplot(TrainData, aes(x = road_quality, y = flood_risk_score)) +
+  geom_boxplot(fill = box_col, alpha = 0.7, outlier.alpha = 0.4) +
+  labs(title = "Road quality", x = "Road quality", y = "Flood risk score") +
+  custom_theme
+
+(p_cat1 | p_cat2 | p_cat3) /
+(p_cat4 | p_cat5 | p_cat6)
+```
+
+The exploratory analysis reveals a diverse set of relationships between the 
+predictors and the response variable `flood_risk_score`. The main findings can 
+be summarised as follows:
+
+- **Geographical predictors**:
+  - Both `elevation_m` and `distance_to_river_m` display weak but interpretable 
+  negative associations with flood risk. Lower elevations and locations closer 
+  to rivers tend to exhibit higher flood exposure, consistent with hydrological 
+  expectations.
+  
+-	**Meteorological variables**: `rainfall_7d_mm` and `monthly_rainfall_mm` show
+clear positive linear  trends with the response, indicating that recent and 
+accumulated precipitation substantially increases estimated flood risk.
+
+- **Vegetation indices** `ndvi` and `ndwi` exhibit negligible linear 
+relationships, suggesting that surface-cover characteristics exert only modest 
+influence in the synthetic risk model.
+
+-	**Socio-environmental predictors**:
+    - `built_up_percent` and `population_density_per_km2` show very weak positive 
+  associations with flood risk. 
+    - `infrastructure_score` shows a slight negative association, consistent with 
+  better infrastructure contributing to reduced vulnerability.
+    - Accessibility measures such as `nearest_hospital_km` and 
+  `nearest_evac_km` show almost no linear pattern.
+    - `historical_flood_count` stands out with a clearly increasing trend, making 
+  it one of the strongest predictors in the dataset.
+  
+- **Categorical predictors**:
+  - Certain land-use and socio-geographical categories, such as wetlands and 
+  urban areas, tend to present higher flood risk levels.
+  - Other categories, such as forested areas or soil types associated with
+  better drainage, show generally lower flood risk.
+  - However, the substantial overlap across most categories indicates that many
+  qualitative predictors exert only modest marginal influence.
+
+### <span style="color:#1f77b4">Multicollinearity and correlation analysis</span>
+
+Before fitting linear regression models, it is essential to evaluate whether 
+strong linear relationships exist among the selected continuous predictors. 
+High multicollinearity can inflate coefficient variances, reduce model 
+interpretability, and weaken statistical inference.
+
+We restrict the analysis to the continuous predictors selected in the previous 
+subsection:
+
+- `elevation_m`
+- `distance_to_river_m`
+- `rainfall_7d_mm`
+- `monthly_rainfall_mm`
+- `drainage_index`
+- `ndvi`
+- `ndwi`
+- `population_density_per_km2`
+- `built_up_percent`
+- `infrastructure_score`
+- `nearest_hospital_km`
+- `nearest_evac_km`
+- `historical_flood_count`
+
+
+```{r correlation-heatmap, fig.width=9, fig.height=9}
+
+# Step 1: We define the list of continuous predictor names
+vars <- c(
+  "elevation_m",
+  "distance_to_river_m",
+  "rainfall_7d_mm",
+  "monthly_rainfall_mm",
+  "drainage_index",
+  "ndvi",
+  "ndwi",
+  "population_density_per_km2",
+  "built_up_percent",
+  "infrastructure_score",
+  "nearest_hospital_km",
+  "nearest_evac_km",
+  "historical_flood_count"
+)
+
+# Step 2: We select these variables from the training dataset
+cont_vars <- TrainData |>
+  dplyr::select(dplyr::all_of(vars))
+
+# Step 3: We compute the Pearson correlation matrix
+cor_matrix <- cor(
+  cont_vars,
+  use   = "pairwise.complete.obs",
+  method = "pearson"
+)
+
+# Print the numeric matrix rounded to 2 decimals to inspect it
+# round(cor_matrix, 2)
+
+# Step 4: We reshape the matrix to a long format suitable for ggplot2
+cor_df <- as.data.frame(as.table(cor_matrix))
+names(cor_df) <- c("Var1", "Var2", "Correlation")
+
+# Step 5: We create a custom heatmap with ggplot
+ggplot(cor_df, aes(x = Var1, y = Var2, fill = Correlation)) +
+  geom_tile() +
+  geom_text(aes(label = sprintf("%.2f", Correlation)), size = 3) +
+  scale_fill_gradient2(
+    low  = "#c6dbef",
+    mid  = "white",
+    high = "#08306b",
+    midpoint = 0,
+    limits = c(-1, 1)
+  ) +
+  coord_equal() +
+  labs(
+    title = "Correlation matrix of continuous predictors",
+    x = NULL,
+    y = NULL
+  ) +
+  theme_minimal(base_size = 11) +
+  theme(
+    plot.title  = element_text(face = "bold", size = 14, hjust = 0.5),
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    panel.grid  = element_blank()
+  )
+```
+
+
+The correlation matrix of the 13 continuous predictors shows that overall 
+multicollinearity is extremely low:
+
+- Most pairwise correlations are close to 0, indicating that the predictors 
+capture largely distinct aspects of the physical and socio-environmental system.
+- The highest correlations are still very small (around 0.07 or −0.16), far 
+below any level considered problematic.
+- In hydrological and environmental datasets, variables such as 
+`rainfall_7d_mm`, `monthly_rainfall_mm`, `distance_to_river_m`and 
+`elevation_m` could theoretically show moderate correlations, but in this 
+synthetic dataset they are almost independent.
+- Historical variables as `historical_flood_count` are also weakly related to 
+geographic or meteorological predictors, reflecting the dataset’s construction.
+- We can conclude that all the selected predictors are safe to include 
+simultaneously in linear regression models without risk of unstable coefficient
+estimates.
+
+## <span style="color:#1f77b4">Linear Regression Modelling</span>
+
+### <span style="color:#1f77b4">Quantifying associations between predictors and the response variable</span>
+
+Before specifying the linear regression models, and completing the work 
+performed in the previous section, it is useful to quantify the strength of the 
+association between each predictor and the response variable 
+`flood_risk_score`.  
+
+\vspace{0.1cm}
+
+Evaluating these associations provides an objective foundation for selecting 
+predictors, identifying irrelevant variables, and anticipating potential 
+modelling challenges.
+
+\vspace{0.1cm}
+
+Given that the dataset contains both continuous and categorical predictors, we 
+evaluate their relationships with the response using appropriate measures:
+
+- **For continuous predictors**, we compute **Pearson correlation coefficients**, 
+  which capture the direction and magnitude of linear associations.
+- **For categorical predictors**, where correlations are not defined, we use 
+  **one-way ANOVA** and report **eta-squared (η²)** as a measure of effect size, 
+  quantifying the proportion of variance in `flood_risk_score` explained by 
+  category membership.
+- **For binary categorical variables**, we additionally inspect group mean 
+  differences to provide an intuitive comparison between categories.
+
+```{r}
+
+# List of continuous predictors
+cont_predictors <- c(
+  "elevation_m", "distance_to_river_m", "rainfall_7d_mm", "monthly_rainfall_mm",
+  "drainage_index", "ndvi", "ndwi", "population_density_per_km2",
+  "built_up_percent", "infrastructure_score",
+  "nearest_hospital_km", "nearest_evac_km", "historical_flood_count"
+)
+
+# List of categorical predictors
+cat_predictors <- c("landcover", "soil_type", "urban_rural",
+                    "water_supply", "electricity", "road_quality")
+
+# Continuous predictors: correlations
+cont_assoc <- cont_predictors |>
+  lapply(function(v) {
+    cor_val <- cor(TrainData[[v]], TrainData$flood_risk_score,
+                   use = "pairwise.complete.obs", method = "pearson")
+    tibble(Predictor = v, Type = "Continuous", Association = cor_val)
+  }) |>
+  bind_rows()
+
+# Categorical predictors: ANOVA effect size (Eta-squared)
+cat_assoc <- cat_predictors |>
+  lapply(function(v) {
+    # I build the formula flood_risk_score ~ <predictor>
+    fmla <- as.formula(paste("flood_risk_score ~", v))
+    model <- aov(fmla, data = TrainData)
+    eta_sq <- etaSquared(model, anova = TRUE)[1, "eta.sq"]
+    tibble(Predictor = v, Type = "Categorical", Association = eta_sq)
+  }) |>
+  bind_rows()
+
+# Combining and displaying the results
+summary_table <- bind_rows(cont_assoc, cat_assoc)
+
+kable(
+  summary_table,
+  caption = "Association between predictors and flood risk score",
+  digits = 3
+)
+```
+
+For categorical variables, the η² values are close to zero, indicating that 
+group membership (e.g., land-cover class, soil type, urban/rural status, 
+access to services) explains very little variance in the response variable when
+considered individually. This suggests that their influence is limited in a
+marginal (univariate) sense and may become relevant only when combined with 
+other predictors in a multivariate modelling context.
+
+
+### <span style="color:#1f77b4">Baseline simple linear regression model</span>
+
+Given the correlation analysis conducted in the previous subsection, we now 
+refine our focus to those continuous predictors that exhibited the strongest 
+marginal associations with the response variable `flood_risk_score`.
+
+\vspace{0.1cm}
+
+In particular, `monthly_rainfall_mm`, `rainfall_7d_mm`, 
+`historical_flood_count`,`distance_to_river_m`, `drainage_index`, 
+`infrastructure_score` and `elevation_m` demonstrated the largest absolute 
+correlations, indicating a potentially meaningful linear relationship with the 
+flood risk score when considered individually. 
+
+\vspace{0.1cm}
+
+To further quantify the explanatory power of these predictors, 
+we fit a series of simple linear regression models of the form
+
+\[ 
+flood\_risk\_score = \beta_0 + \beta_1 X + \varepsilon ,
+\]
+
+where $X$  denotes each selected predictor in isolation.
+
+\vspace{0.1cm}
+
+This step serves two purposes:
+
+  - Provide an interpretable measure of the individual effect of each predictor 
+on the response, free from confounding by other variables.
+
+  - Establish a baseline for comparison before transitioning to multivariate 
+linear regression models that incorporate multiple predictors simultaneously.
+
+By analysing the estimated coefficients, statistical significance and $R^2$ 
+values of these simple models, we obtain a clearer picture of which 
+environmental and socio-hydrological factors have the strongest direct 
+influence on flood risk in a univariate setting.
+
+```{r simple-lm-top, message=FALSE, warning=FALSE}
+
+# Simple linear regression: flood_risk_score ~ monthly_rainfall_mm
+lm_monthly <- lm(flood_risk_score ~ monthly_rainfall_mm, data = TrainData)
+summary(lm_monthly)
+
+# Simple linear regression: flood_risk_score ~ rainfall_7d_mm
+lm_rain7d <- lm(flood_risk_score ~ rainfall_7d_mm, data = TrainData)
+summary(lm_rain7d)
+
+# Simple linear regression: flood_risk_score ~ historical_flood_count
+lm_hist <- lm(flood_risk_score ~ historical_flood_count, data = TrainData)
+summary(lm_hist)
+
+# Simple linear regression: flood_risk_score ~ distance_to_river_m
+lm_dist <- lm(flood_risk_score ~ distance_to_river_m, data = TrainData)
+summary(lm_dist)
+
+# Simple linear regression: flood_risk_score ~ drainage_index
+lm_drain <- lm(flood_risk_score ~ drainage_index, data = TrainData)
+summary(lm_drain)
+
+# Simple linear regression: flood_risk_score ~ infrastructure_score
+lm_infra <- lm(flood_risk_score ~ infrastructure_score, data = TrainData)
+summary(lm_infra)
+
+# Simple linear regression: flood_risk_score ~ elevation_m
+lm_elev <- lm(flood_risk_score ~ elevation_m, data = TrainData)
+summary(lm_elev)
+
+```
+
+The following conclusions are drawn from the simple linear regression models 
+fitted using the predictors that showed the strongest marginal associations 
+with the response variable `flood_risk_score`:
+
+- **`monthly_rainfall_mm`**
+  - This predictor exhibits the highest individual explanatory power, with an 
+  $R²$ of approximately 0.59.
+  - The estimated coefficient is large and highly significant ($p < 2×10^{-16}$) 
+  indicating a strong positive association between accumulated monthly rainfall 
+  and flood risk.
+  - The residual standard error (≈ 9.47) is substantially lower than in the 
+  other models, reinforcing its dominant influence on the synthetic flood-risk score.
+
+- **`rainfall_7d_mm`**
+  - This variable also shows a statistically significant positive relationship 
+  with flood risk ($p < 2×10^{-16}$), consistent with hydrological expectations.
+  - Its explanatory power is more modest ($R²$ ≈ 0.166), suggesting that
+  short-term rainfall contributes to flood risk but less strongly than monthly 
+  accumulation.
+  - The direction and magnitude of the estimated effect confirm that recent 
+  precipitation still plays a meaningful role in shaping flood-risk levels.
+
+- **`historical_flood_count`**
+  - The estimated effect is positive and highly significant ($p < 2×10^{-16}$), 
+  indicating that locations with more recorded flood events tend to have higher
+  risk scores.
+  - Although the explanatory power is comparatively low ($R²$ ≈ 0.052), this 
+  predictor remains relevant, likely capturing structural vulnerability, local 
+  geomorphology or missing hydrological processes.
+
+- **`distance_to_river_m`**
+  - Displays a significant negative association with flood risk 
+  ($p < 2×10^{-16}$), consistent with hydrological reasoning: locations closer 
+  to rivers tend to exhibit higher flood risk.
+  - Explanatory power is modest ($R²$ ≈ 0.021), suggesting that while river 
+  proximity matters, its marginal effect is weaker than rainfall-driven 
+  predictors.
+
+- **`drainage_index`**
+  - Shows a statistically significant negative effect ($p < 2×10^{-16}$), 
+  indicating that better drainage conditions are associated with reduced 
+  flood risk.
+  - Its explanatory power is similar to `distance_to_river_m` ($R²$ ≈ 0.021), 
+  reinforcing the idea that infiltration and terrain drainage capacity mitigate 
+  floodwater accumulation.
+
+- **`infrastructure_score`**
+  - Exhibits a significant negative association with flood risk 
+  ($p < 2×10^{-16}$). Locations with better infrastructure tend to have slightly 
+  lower flood-risk scores.
+  - The explanatory power is relatively weak ($R²$ ≈ 0.02), indicating that 
+  structural preparedness cannot offset strong hydrometeorological drivers.
+
+- **`elevation_m`**
+  - Shows a significant negative association ($p < 2×10^{-16}$), reflecting 
+  that lower-elevation areas face greater flood risk.
+  - Explanatory power remains small ($R²$ ≈ 0.012), but the effect direction 
+  aligns with hydrological behaviour, floodwaters accumulate in low-lying 
+  terrain.
+
+**Overall**, these results show that `monthly_rainfall_mm` is by far the 
+strongest marginal predictor of `flood_risk_score`, while `rainfall_7d_mm` and
+`historical_flood_count` provide more moderate contributions.
+
+
+### <span style="color:#1f77b4">Building Multiple Linear Regression Models</span>
+
+We now proceed to **construct a series of multiple linear regression models** 
+and to **evaluate their predictive performance on the hold-out test set**. 
+
+\vspace{0.1cm}
+
+Comparing the models on both explanatory power and out-of-sample accuracy will 
+guide the selection of a final regression specification for detailed diagnostic 
+analysis.
+
+\vspace{0.1cm}
+
+We start with a full specification that includes all continuous predictors 
+which exhibited meaningful marginal associations with the response variable
+`flood_risk_score`:
+
+- `monthly_rainfall_mm`
+- `rainfall_7d_mm`
+- `historical_flood_count`
+- `distance_to_river_m`
+- `drainage_index`
+- `infrastructure_score`
+- `elevation_m`
+
+```{r mlr-1, message=FALSE, warning=FALSE}
+
+# Model 1: Full relevant model
+
+lm_full_rel <- lm(
+  flood_risk_score ~ monthly_rainfall_mm +
+                     rainfall_7d_mm +
+                     historical_flood_count +
+                     distance_to_river_m +
+                     drainage_index +
+                     infrastructure_score +
+                     elevation_m,
+  data = TrainData
+)
+
+# Test-set predictions and performance
+pred_full_rel <- predict(lm_full_rel, newdata = TestData)
+
+R2_test_full_rel  <- cor(TestData$flood_risk_score, pred_full_rel)^2
+RMSE_test_full_rel <- sqrt(
+  mean((TestData$flood_risk_score - pred_full_rel)^2)
+)
+```
+
+We next consider a more parsimonious specification that retains only the 
+3 strongest predictors identified in the exploratory and simple 
+regression analyses. This model incorporates the two rainfall variables 
+`monthly_rainfall_mm` and `rainfall_7d_mm` together with 
+`historical_flood_count`, capturing the dominant meteorological drivers and the
+accumulated vulnerability of each location. By focusing on these three 
+predictors, we aim to evaluate whether a simpler formulation can achieve 
+competitive predictive accuracy while improving interpretability.
+
+```{r mlr-2, message=FALSE, warning=FALSE}
+
+# Model 2: Strong rainfall + history
+
+lm_strong3 <- lm(
+  flood_risk_score ~ monthly_rainfall_mm +
+                     rainfall_7d_mm +
+                     historical_flood_count,
+  data = TrainData
+)
+
+pred_strong3 <- predict(lm_strong3, newdata = TestData)
+R2_test_strong3   <- cor(TestData$flood_risk_score, pred_strong3)^2
+RMSE_test_strong3 <- sqrt(mean((TestData$flood_risk_score - pred_strong3)^2))
+```
+
+We also evaluate a simplified rainfall-only specification, which includes 
+`monthly_rainfall_mm` and `rainfall_7d_mm` as the sole predictors. This model 
+isolates the direct meteorological drivers of flood risk to assess how much 
+predictive power can be achieved without incorporating additional environmental 
+or structural factors.
+
+```{r mlr-3, message=FALSE, warning=FALSE}
+
+# Model 3: Rainfall-only model
+
+lm_rain <- lm(
+  flood_risk_score ~ monthly_rainfall_mm +
+                     rainfall_7d_mm,
+  data = TrainData
+)
+
+pred_rain <- predict(lm_rain, newdata = TestData)
+R2_test_rain   <- cor(TestData$flood_risk_score, pred_rain)^2
+RMSE_test_rain <- sqrt(mean((TestData$flood_risk_score - pred_rain)^2))
+```
+
+We further estimate a hydro-geomorphological model that integrates key physical 
+determinants of flood generation. In addition to the two rainfall measures, 
+this specification includes `distance_to_river_m`, `drainage_index` 
+and `elevation_m`, allowing us to capture the combined influence of
+precipitation, terrain structure, and hydrological context on flood risk.
+
+```{r mlr-4, message=FALSE, warning=FALSE}
+
+# Model 4: Hydro-geomorphological model
+
+lm_hydro <- lm(
+  flood_risk_score ~ monthly_rainfall_mm +
+                     rainfall_7d_mm +
+                     distance_to_river_m +
+                     drainage_index +
+                     elevation_m,
+  data = TrainData
+)
+
+pred_hydro <- predict(lm_hydro, newdata = TestData)
+R2_test_hydro   <- cor(TestData$flood_risk_score, pred_hydro)^2
+RMSE_test_hydro <- sqrt(mean((TestData$flood_risk_score - pred_hydro)^2))
+```
+
+Finally, we estimate a comprehensive model that incorporates all available 
+predictors, including both continuous and categorical variables.
+
+```{r mlr-all, message=FALSE, warning=FALSE}
+
+# Model 5: All predictors (continuous + categorical)
+
+lm_all <- lm(
+  flood_risk_score ~ elevation_m +
+                     distance_to_river_m +
+                     rainfall_7d_mm +
+                     monthly_rainfall_mm +
+                     drainage_index +
+                     ndvi +
+                     ndwi +
+                     population_density_per_km2 +
+                     built_up_percent +
+                     infrastructure_score +
+                     nearest_hospital_km +
+                     nearest_evac_km +
+                     historical_flood_count +
+                     landcover +
+                     soil_type +
+                     urban_rural +
+                     water_supply +
+                     electricity +
+                     road_quality,
+  data = TrainData
+)
+
+# Test-set predictive performance
+pred_all       <- predict(lm_all, newdata = TestData)
+R2_test_all    <- cor(TestData$flood_risk_score, pred_all)^2
+RMSE_test_all  <- sqrt(mean((TestData$flood_risk_score - pred_all)^2))
+```
+
+**Note**: Categorical predictors do not require explicit encoding when fitting 
+classical multiple linear regression models using `lm()`, as R automatically 
+applies appropriate dummy-variable coding.
+
+\vspace{0.1cm}
+
+We now summarise the predictive performance of all fitted multiple linear 
+regression models by compiling their test-set $R^2$ and $RMSE$ values into a 
+single comparison table.
+
+```{r full-mlr-5, message=FALSE, warning=FALSE}
+
+# Collect test-set performance
+mlr_perf <- tibble(
+  Model = c("Full relevant",
+            "Strong rainfall + history",
+            "Rainfall only",
+            "Hydro-geomorphological",
+            "All predictors"),
+  R2_test = c(R2_test_full_rel,
+              R2_test_strong3,
+              R2_test_rain,
+              R2_test_hydro,
+              R2_test_all),
+  RMSE_test = c(RMSE_test_full_rel,
+                RMSE_test_strong3,
+                RMSE_test_rain,
+                RMSE_test_hydro,
+                RMSE_test_all)
+)
+
+# Print as a clean table (no tibble header)
+as.data.frame(mlr_perf)
+```
+
+The comparison of the alternative multiple linear regression models on the 
+test set leads to the following conclusions:
+
+- The **“All predictors”** model achieves the **best predictive performance**, 
+with the highest test-set \(R^2 \approx 0.863\) and the lowest RMSE (≈ 5.42). 
+The improvement over the **“Full relevant”** model is modest but consistent, 
+suggesting that adding the remaining predictors and categorical factors yields 
+a small yet measurable gain in accuracy.
+
+- The **“Full relevant”** model (only continuous predictors with stronger 
+marginal associations) performs almost as well (\(R^2 \approx 0.859\), 
+RMSE ≈ 5.51). This indicates that most of the predictive power is already 
+captured by the key environmental and hydrometeorological variables identified 
+in the exploratory analysis.
+
+- Simpler specifications that rely solely on rainfall (**“Rainfall only”**) or 
+rainfall plus historical events (**“Strong rainfall + history”**) show 
+**clearly lower \(R^2\)** (between 0.74 and 0.79) and **higher RMSE**, 
+confirming that incorporating additional terrain and infrastructural 
+information substantially improves out-of-sample predictions.
+
+- The **“Hydro-geomorphological”** model, which combines rainfall with distance
+to rivers, drainage and elevation, performs better than the rainfall-only model 
+but remains slightly inferior to the full continuous and all-predictor models. 
+This suggests that, while hydro-geomorphological factors are important, they do 
+not fully substitute the information carried by historical events or 
+socio-environmental variables.
+
+Overall, these results justify **selecting the “All predictors” model as the 
+final specification for diagnostic analysis**, while noting that the 
+**“Full relevant”** model offers a competitive and more parsimonious 
+alternative with very similar predictive performance.
+
+### <span style="color:#1f77b4">Model Diagnosis</span>
+
+
+We now assess whether the final selected model (**“All predictors”**) satisfies
+the classical linear regression assumptions by examining the behaviour of the 
+residuals and identifying potential influential observations.
+
+\vspace{0.1cm}
+
+We begin by checking homoscedasticity, the assumption that the variance of 
+residuals is constant across fitted values. This is inspected using a plot of 
+standardized residuals versus fitted values, where a random cloud of points 
+around zero would indicate no visible pattern.
+
+\vspace{0.1cm}
+
+To assess independence, we inspect the residuals across the observation index. 
+A lack of structure in this plot would suggest that the residuals do not exhibit
+serial dependence.
+
+```{r diag-resid-basic, fig.width=6.5, fig.height=2.75, message=FALSE, warning=FALSE}
+par(mfrow = c(1, 2))
+
+resid_std <- rstandard(lm_all)
+
+# Plot 1: Residuals vs Fitted
+plot(fitted(lm_all), resid_std,
+     xlab = "Fitted values", 
+     ylab = "Standardized residuals",
+     main = "Residuals vs Fitted",
+     pch = 16, col = "darkred", cex = 0.65)
+abline(h = 0, col = "gray40", lty = 2, lwd = 1.3)
+
+# Plot 2: Residuals vs Observation Index
+plot(1:length(resid_std), resid_std,
+     xlab = "Observation Index", 
+     ylab = "Standardized residuals",
+     main = "Residuals vs Obs. Index",
+     pch = 16, col = "darkblue", cex = 0.65)
+abline(h = 0, col = "gray40", lty = 2, lwd = 1.3)
+```
+
+- The **Residuals vs Fitted** plot shows a broadly symmetric cloud around zero 
+with no strong funnel shape, suggesting that **variance is approximately constant across fitted values**. 
+Minor deviations are present but not severe.
+
+- The **Residuals vs Observation Index** plot does not exhibit visible time-like 
+patterns or clustering, indicating **no obvious serial dependence**.  
+
+To assess whether residuals follow a normal distribution, we use a Q-Q plot. 
+A linear pattern in the Q-Q plot support the assumption of normality.
+
+```{r normality-ks, message=FALSE, warning=FALSE}
+res <- resid(lm_all)
+qqnorm(res, main = "Normal Q–Q Plot of Residuals")
+qqline(res, col = "blue", lwd = 2)
+```
+
+The **Q–Q plot** shows a largely linear pattern in the central region, with 
+moderate deviations in the tails, indicating that the residuals follow an 
+approximately **normal distribution**.
+
+\vspace{0.1cm}
+
+The Scale–Location plot is used to further assess the homoscedasticity 
+assumption by visualising whether the spread of residuals remains constant 
+across fitted values. A roughly horizontal pattern indicates stable variance, 
+while systematic trends suggest heteroscedasticity.
+
+```{r}
+
+# Compute standardized residuals
+resid_std <- rstandard(lm_all)
+
+# Plot: sqrt(|standardized residuals|) vs fitted values
+plot(
+  fitted(lm_all),
+  sqrt(abs(resid_std)),
+  xlab = "Fitted values",
+  ylab = "Sqrt(|Standardized residuals|)",
+  main = "Scale–Location Plot",
+  pch = 16,
+  col = "darkgreen",
+  cex = 0.65
+)
+
+# Add a smooth trend line
+lines(
+  lowess(fitted(lm_all), sqrt(abs(resid_std))),
+  col = "black",
+  lwd = 2
+)
+```
+
+In this case, the **Scale–Location plot** shows an approximately horizontal trend 
+with no pronounced funnel shape, indicating that the variance of the residuals 
+remains reasonably stable across fitted values. This suggests that the 
+assumption of **homoscedasticity** is largely satisfied for the final model.
+
+\vspace{0.1cm}
+
+The Residuals vs Leverage plot is used to identify potentially influential 
+observations that may disproportionately affect the fitted regression model. 
+Points with high leverage and large residuals warrant closer inspection.
+
+```{r}
+plot(
+  lm_all,
+  which = 5,
+  pch = 16,
+  col = "purple",
+  cex = 0.7
+)
+```
+
+We also assess influence diagnostics by visualizing standard influence measures 
+for all observations, in order to identify potential high-leverage or 
+influential points that may affect the stability of the fitted model.
+
+```{r, fig.width=8.5, fig.height=8, message=FALSE, warning=FALSE}
+influenceIndexPlot(lm_all)
+```
+
+- The **Residuals vs Leverage** plot reveals a small number of observations 
+with relatively higher leverage and residual magnitude. However, most points
+lie well within the Cook’s distance contours, indicating that 
+**no single observation exerts undue influence** on the fitted regression 
+coefficients.
+
+- The **influence index plots (Cook’s distance, studentized residuals, hat values)** 
+confirm that, although a few observations warrant closer inspection,
+their overall impact on model stability is limited. The majority of
+observations exhibit low leverage and low influence.
+
+### <span style="color:#1f77b4">Comparison with the Benchmark Model</span>
+
+We first define a simple benchmark (naïve) model that predicts 
+`flood_risk_score`on the test set using only the mean value observed in the 
+training set. This provides a baseline to judge whether our regression models 
+deliver a meaningful improvement.
+
+```{r benchmark-model, message=FALSE, warning=FALSE}
+
+# First, we compute the benchmark prediction (in this case the mean)
+bench_mean <- mean(TrainData$flood_risk_score, na.rm = TRUE)
+
+# Then, we generate constant predictions for every test observation
+pred_bench <- rep(bench_mean, nrow(TestData))
+                  
+# Finally we evaluate benchmark predictive performance on the test set
+RMSE_test_bench <- sqrt(mean((TestData$flood_risk_score - pred_bench)^2, na.rm = TRUE))
+MAE_test_bench  <- mean(abs(TestData$flood_risk_score - pred_bench), na.rm = TRUE)
+
+cat("Benchmark mean (train):", round(bench_mean, 4), "\n")
+cat("Benchmark RMSE (test):", round(RMSE_test_bench, 4), "\n")
+cat("Benchmark MAE  (test):", round(MAE_test_bench, 4), "\n")
+
+```
+
+**Note**: $R^2$ via correlation is not defined here because `pred_bench` is 
+constant.
+
+- The benchmark achieves a **test RMSE of approximately 14.67** and a 
+**test MAE of approximately 11.80**, reflecting the error incurred when 
+ignoring all covariate information.
+- In contrast, the selected **“All predictors”** multiple linear regression
+model (`lm_all`) attains a **substantially lower RMSE (≈ 5.42)**,
+indicating a large improvement in predictive accuracy.
+- This corresponds to a **reduction of more than 63% in RMSE** relative to the 
+benchmark, demonstrating that the regression model captures meaningful
+structure in the data beyond the global mean.
+
+## <span style="color:#1f77b4">Computing Prediction Intervals</span>
+
+In addition to point predictions, prediction intervals quantify the uncertainty 
+around individual forecasts by accounting for both model uncertainty and 
+irreducible noise in the response variable.
+
+\vspace{0.1cm}
+
+We compute 95% prediction intervals for the final selected linear regression 
+model (**lm_all**) on the test set. These intervals provide a range within 
+which future flood risk scores are expected to fall with a given confidence 
+level.
+
+```{r}
+
+# Computing prediction intervals on the test set
+pred_int <- predict(
+  lm_all,
+  newdata = TestData,
+  interval = "prediction",
+  level = 0.95
+)
+
+# Storing predictions and intervals
+TestData$Pred  <- pred_int[, "fit"]
+TestData$Lower <- pred_int[, "lwr"]
+TestData$Upper <- pred_int[, "upr"]
+```
+
+To visually assess the quality of the prediction intervals, we plot the 
+observed flood risk scores together with the fitted values and their 
+corresponding prediction bands.
+
+```{r}
+TestData %>%
+  arrange(Pred) %>%
+  ggplot(aes(x = Pred)) +
+  geom_point(aes(y = flood_risk_score),
+             color = "blue", alpha = 0.5, size = 1.3) +
+  geom_line(aes(y = Pred),
+            color = "red", linewidth = 1) +
+  geom_ribbon(aes(ymin = Lower, ymax = Upper),
+              fill = "orange", alpha = 0.25) +
+  labs(
+    title = "Prediction Intervals vs Observed Flood Risk",
+    subtitle = "Red line: Predicted values | Blue points: Observed values",
+    x = "Predicted flood risk score",
+    y = "Flood risk score"
+  ) +
+  theme_minimal()
+```
+
+We assess the empirical coverage by computing the proportion of test 
+observations that fall within the predicted intervals.
+
+```{r}
+# Counting observations outside the prediction intervals
+outside_interval <- sum(
+  TestData$flood_risk_score < TestData$Lower |
+  TestData$flood_risk_score > TestData$Upper
+)
+
+# Computing coverage
+total_obs <- nrow(TestData)
+coverage <- round(100 * (1 - outside_interval / total_obs), 1)
+
+cat("Percentage of observations inside the prediction intervals:", 
+    coverage, "%\n")
+```
+
+## <span style="color:#1f77b4">Application of the Tidymodels Framework</span>
+
+We now replicate our final linear regression model using the tidymodels 
+framework, which standardises preprocessing (scaling + dummy encoding) and 
+evaluates performance via cross-validation before fitting the final model and 
+testing it on the hold-out set.
+
+```{r tidymodels-lm, message=FALSE, warning=FALSE}
+
+set.seed(123)
+
+# 1) Preprocessing recipe (scale numeric + dummy categorical)
+
+risk_recipe <- recipe(flood_risk_score ~ ., data = TrainData) %>%
+  
+  # Assign ID role to non-predictive variables
+  update_role(
+    record_id, district, place_name, latitude, longitude, generation_date,
+    new_role = "id"
+  ) %>%
+  
+  # Convert character predictors to factors
+  step_string2factor(all_nominal_predictors()) %>%
+  
+  # Dummy encode categorical predictors
+  step_dummy(all_nominal_predictors(), one_hot = TRUE) %>%
+  
+  # Center and scale numeric predictors
+  step_normalize(all_numeric_predictors())
+
+# 2) Model specification (linear regression via lm)
+lin_spec <- linear_reg() %>%
+  set_engine("lm")
+
+# 3) Workflow
+lin_wf <- workflow() %>%
+  add_recipe(risk_recipe) %>%
+  add_model(lin_spec)
+
+# 4) Cross-validation (10-fold, 5 repeats) + metrics
+cv_folds <- vfold_cv(TrainData, v = 10, repeats = 5)
+
+cv_fit <- lin_wf %>%
+  fit_resamples(
+    resamples = cv_folds,
+    metrics   = metric_set(rmse, rsq, mae),
+    control   = control_resamples(save_pred = TRUE)
+  )
+
+cv_metrics <- cv_fit %>% collect_metrics()
+cv_metrics
+
+# 5) Fit final model on full training set + test-set evaluation
+final_fit <- lin_wf %>% fit(data = TrainData)
+
+test_predictions <- TestData %>%
+  dplyr::select(-any_of("Pred")) %>%                       # avoid name clashes
+  dplyr::bind_cols(
+    predict(final_fit, new_data = TestData) %>%
+      dplyr::rename(Pred = .pred)
+  )
+
+# (Optional) sanity check
+# names(test_predictions)
+
+test_metrics <- test_predictions %>%
+  yardstick::metrics(truth = flood_risk_score, estimate = Pred)
+
+test_metrics
+
+# 6) Observed vs Predicted plot (test set)
+ggplot(test_predictions, aes(x = flood_risk_score, y = Pred)) +
+  geom_point(alpha = 0.5,col="blue") +
+  geom_abline(intercept = 0, slope = 1, linetype = "dashed", col="red") +
+  labs(
+    title = "Observed vs Predicted Flood Risk (Test Set)",
+    x = "Observed flood_risk_score",
+    y = "Predicted flood_risk_score"
+  ) +
+  theme_minimal()
+
+# 7) Benchmark comparison (mean-only baseline on test set)
+bench_mean <- mean(TrainData$flood_risk_score, na.rm = TRUE)
+
+bench_predictions <- TestData %>%
+  mutate(Pred = bench_mean)
+
+bench_metrics <- bench_predictions %>%
+  metrics(truth = flood_risk_score, estimate = Pred)
+
+bench_metrics
+
+# Optional: print side-by-side
+list(
+  Test_Metrics = test_metrics,
+  Benchmark_Metrics = bench_metrics
+)
+```
+
+- The tidymodels implementation reproduces the performance of the classical 
+multiple linear regression model, yielding very similar test-set accuracy 
+(RMSE ≈ 5.37, R² ≈ 0.90).
+- Cross-validation confirms that the model generalizes well, with low 
+variability across folds and stable performance estimates.
+- Compared to the mean-only benchmark, the tidymodels linear regression 
+achieves a substantial reduction in prediction error, confirming that the model
+captures meaningful structure in the data.
+
+# <span style="color:#1f77b4">Second task: Generalized Linear Models (GLM)</span>
+
+## <span style="color:#1f77b4">Motivation for Generalized Linear Models</span>
+
+Classical linear regression relies on strong assumptions regarding the 
+distribution of the response variable, most notably normality, constant 
+variance, and linearity of the conditional mean. However, many real-world 
+response variables violate these assumptions, particularly when the outcome 
+is binary, categorical, or represents counts or proportions.
+
+\vspace{0.1cm}
+
+Generalized Linear Models (GLMs) extend the classical linear regression 
+framework by allowing the response variable to follow a distribution from 
+the exponential family and by introducing a link function that relates the 
+expected value of the response to a linear predictor. This flexibility enables 
+the modelling of non-Gaussian outcomes while retaining an interpretable 
+regression structure.
+
+\vspace{0.1cm}
+
+In the context of flood risk analysis, certain variables of interest describe 
+discrete events, such as whether a flood occurred or not, rather than 
+continuous magnitudes. For such outcomes, linear regression is not appropriate,
+as it may produce predictions outside the admissible range and violate 
+distributional assumptions. GLMs, and in particular logistic regression 
+for binary responses, provide a principled framework to model event 
+probabilities while ensuring valid predictions and interpretable effects of 
+explanatory variables.
+
+## <span style="color:#1f77b4">Choice of the Response Variable</span>
+
+In the context of Generalized Linear Models, the choice of the response variable
+is closely tied to the nature of the data and the type of phenomenon under study.
+Unlike the previous section, where a continuous flood risk index was modelled
+using linear regression, this part of the analysis focuses on the occurrence of
+flood events as a binary outcome.
+
+\vspace{0.1cm}
+
+Among the available variables, the response variable selected for the GLM
+analysis is **`flood_occurrence_current_event`**, which indicates whether a
+flood event occurred at a given location during the simulated current period.
+This variable takes two possible values (“Yes” or “No”), making it naturally
+suited for a binary response model.
+
+\vspace{0.1cm}
+
+Modelling flood occurrence rather than flood severity allows us to address a
+different but complementary research question: instead of estimating how severe
+flood risk is, we aim to quantify the probability that a flood event occurs 
+given environmental, geographical, and socio-demographic conditions. 
+This perspective is particularly relevant for early warning systems and risk 
+classification tasks, where predicting the likelihood of an event is sometimes
+more important than predicting its magnitude.
+
+## <span style="color:#1f77b4">Model Specification for the Generalized Linear Model</span>
+
+In this section, we specify a Generalized Linear Model to analyse the 
+probability of flood occurrence. Given the binary nature of the response 
+variable, `flood_occurrence_current_event`, we adopt a 
+**binomial GLM with a logistic link function**.
+
+Let \( Y_i \) denote the indicator of flood occurrence at location \( i \), 
+where \( Y_i = 1 \) if a flood occurred and \( Y_i = 0 \) otherwise. 
+
+The model assumes that  
+\[
+Y_i \sim \text{Bernoulli}(p_i),
+\]
+where \( p_i = P(Y_i = 1 \mid \mathbf{x}_i) \) is the conditional 
+probability of a flood event.
+
+The relationship between the predictors and the response is modelled through 
+the logit link function:
+\[
+\log\left(\frac{p_i}{1 - p_i}\right) = \beta_0 + \beta_1 x_{i1} + \cdots + 
+\beta_p x_{ip}.
+\]
+
+This formulation ensures that predicted probabilities lie in the interval 
+\([0,1]\) and allows the effects of explanatory variables to be interpreted in 
+terms of log-odds. The selected predictors could include hydrological, 
+geographical and socio-environmental variables previously identified.
+
+## <span style="color:#1f77b4">Data Import and Train-Test Split for GLM</span>
+
+As we explained previously, in contrast to the previous linear regression 
+analysis, where the response variable was continuous, the Generalized Linear 
+Model focuses on modelling the occurrence of flood events as a binary outcome. 
+For this reason, the data partitioning strategy is adapted accordingly.
+
+\vspace{0.1cm}
+
+The dataset is divided into training and test sets using an 80/20 split, 
+**stratified by the binary response variable** `flood_occurrence_current_event`.
+
+\vspace{0.1cm}
+
+Stratification ensures that the proportion of flood and non-flood observations 
+is preserved across both subsets, which is essential for reliable estimation 
+and evaluation of probabilistic classification models. This approach prevents 
+imbalances in class frequencies that could otherwise bias model fitting and
+performance assessment.
+
+```{r glm-data-import-split, message=FALSE, warning=FALSE}
+set.seed(123)
+
+# Importing data
+srilanka <- read_csv("sri_lanka_flood_risk_dataset_25000.csv")
+
+# Ensuring that the GLM response is a factor with reference level = "No"
+srilanka <- srilanka %>%
+  mutate(
+    flood_occurrence_current_event = factor(
+      flood_occurrence_current_event,
+      levels = c("No", "Yes")
+    )
+  )
+
+
+# Stratified 80/20 train–test split (stratify by the GLM response)
+
+data_split_glm <- initial_split(
+  srilanka,
+  prop   = 0.8,
+  strata = flood_occurrence_current_event
+)
+
+TrainData <- training(data_split_glm)
+TestData  <- testing(data_split_glm)
+
+# Balance verification
+
+tibble(
+  Set = c("Train", "Test"),
+  n = c(nrow(TrainData), nrow(TestData)),
+  event_rate = c(mean(TrainData$flood_occurrence_current_event == "Yes"),
+                 mean(TestData$flood_occurrence_current_event == "Yes"))
+)
+```
+
+All subsequent exploratory analysis and model estimation for the GLM are 
+conducted on the training set, while the test set is reserved exclusively 
+for out-of-sample evaluation.
+
+## <span style="color:#1f77b4">Exploratory Analysis for the Generalized Linear Model</span>
+
+### <span style="color:#1f77b4">Response variable sanity check and class balance</span>
+
+Before conducting a detailed exploratory analysis of the predictors, we first 
+assess the distribution of the response variable in the training and test sets. 
+As shown in the previous subsection, the binary response variable 
+`flood_occurrence_current_event` is correctly encoded with levels “No” and 
+“Yes”, and the data are partitioned using a stratified 80/20 train–test split.
+
+\vspace{0.1cm}
+
+The resulting class proportions are well preserved across both subsets, with an 
+event rate of approximately 9.7% in the training set and 10.5% in the test set. 
+This confirms that the stratification procedure has successfully maintained the 
+relative frequency of flood events.
+
+
+### <span style="color:#1f77b4">Distribution of the Binary Response Variable</span>
+
+In this subsection, we examine the empirical distribution of the binary response
+variable `flood_occurrence_current_event` in the training set. This preliminary 
+inspection is essential to understand the baseline frequency of flood events 
+and to assess the degree of class imbalance, which directly impacts the 
+interpretation and performance of probabilistic classification models.
+
+\vspace{0.1cm}
+
+Since logistic regression models the probability of an event occurring, an 
+imbalanced response distribution is common and does not invalidate the analysis.
+However, documenting the event rate provides important context for model 
+estimation, coefficient interpretation, and subsequent performance evaluation.
+
+
+```{r}
+
+# Distribution of the binary response variable in the training set
+TrainData %>%
+  count(flood_occurrence_current_event) %>%
+  mutate(
+    proportion = n / sum(n)
+  )
+
+# Bar plot of flood occurrence
+ggplot(TrainData, aes(x = flood_occurrence_current_event)) +
+  geom_bar(fill = "skyblue", alpha = 0.7) +
+  labs(
+    title = "Distribution of Flood Occurrence in the Training Set",
+    x = "Flood occurrence (current event)",
+    y = "Number of observations"
+  ) +
+  theme_minimal()
+```
+
+### <span style="color:#1f77b4">Distribution of Key Predictors by Flood Occurrence</span>
+
+To better understand the relationship between the explanatory variables and 
+the probability of flood occurrence, we examine how different key predictors are
+distributed conditional on the binary response variable. Unlike the exploratory 
+analysis conducted for linear regression, the focus here is not on linearity or
+normality, but on identifying systematic differences in predictor distributions
+between flood and non-flood observations.
+
+\vspace{0.1cm}
+
+Inspecting predictor behaviour across outcome classes provides valuable insight
+into their potential discriminative power and helps assess whether higher or 
+lower values of a given variable are associated with an increased likelihood of 
+flood occurrence. This analysis also supports subsequent model specification 
+and interpretation of regression coefficients in the logistic regression 
+framework.
+
+\vspace{0.1cm}
+
+We begin by comparing the distribution of elevation across flood and non-flood 
+observations. Elevation is a fundamental geographic determinant of flood 
+susceptibility, as lower-lying areas are more prone to water accumulation and 
+overflow. Examining elevation conditional on flood occurrence allows us to 
+assess whether flood events are systematically associated with lower altitudes.
+
+\vspace{0.1cm}
+
+Due to the highly right-skewed distribution of elevation and the 
+presence of extreme values, we re-visualise elevation on a logarithmic scale to
+improve the comparison between flood and non-flood observations.
+
+```{r}
+# Distribution of elevation by flood occurrence (log scale)
+ggplot(
+  TrainData,
+  aes(x = flood_occurrence_current_event, y = elevation_m)
+) +
+  geom_boxplot(fill = "skyblue", alpha = 0.6) +
+  scale_y_log10() +
+  labs(
+    title = "Elevation by Flood Occurrence (Training Set, Log Scale)",
+    x = "Flood occurrence (current event)",
+    y = "Elevation (meters, log scale)"
+  ) +
+  theme_minimal()
+```
+
+When visualized on a logarithmic scale, elevation exhibits a clear systematic 
+difference between flood and non-flood observations. Flood events are 
+associated with lower elevations on average, with the entire distribution for 
+flood occurrences shifted downward relative to non-flood cases. Although 
+substantial overlap remains between the two groups, the observed pattern 
+**confirms elevation as a meaningful predictor of flood occurrence**.
+
+\vspace{0.1cm}
+
+After analyzing elevation, we now examine the distribution of the distance to 
+the nearest river conditional on flood occurrence. By comparing the 
+distributions of distance to river for flood and non-flood observations, we 
+assess whether flood events tend to occur systematically closer to river 
+networks.
+
+```{r}
+
+# Distribution of distance to nearest river by flood occurrence
+ggplot(
+  TrainData,
+  aes(x = flood_occurrence_current_event, y = distance_to_river_m)
+) +
+  geom_boxplot(fill = "skyblue", alpha = 0.6) +
+  labs(
+    title = "Distance to Nearest River by Flood Occurrence (Training Set)",
+    x = "Flood occurrence (current event)",
+    y = "Distance to nearest river (meters)"
+  ) +
+  theme_minimal()
+
+```
+
+Due to the strongly right-skewed nature of distances to river and the presence 
+of extreme values, we further examine the relationship between distance to 
+river and flood occurrence by estimating empirical flood rates across distance
+intervals. 
+
+```{r}
+TrainData %>%
+  mutate(
+    distance_bin = cut(
+      distance_to_river_m,
+      breaks = quantile(distance_to_river_m, probs = seq(0, 1, 0.1), na.rm = 
+                          TRUE),
+      include.lowest = TRUE
+    )
+  ) %>%
+  group_by(distance_bin) %>%
+  summarise(
+    flood_rate = mean(flood_occurrence_current_event == "Yes"),
+    n = n()
+  ) %>%
+  ggplot(aes(x = distance_bin, y = flood_rate)) +
+  geom_point(color = "skyblue") +
+  geom_line(group = 1, color = "skyblue") +
+  labs(
+    title = "Empirical Flood Probability by Distance to River (Training Set)",
+    x = "Distance to nearest river (binned)",
+    y = "Flood occurrence rate"
+  ) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+The distribution of distance to the nearest river exhibits substantial 
+overlap between flood and non-flood observations, indicating limited marginal 
+separation when considered in isolation. However, the analysis of empirical 
+flood probabilities across distance intervals reveals a clear decreasing trend 
+in flood occurrence as distance to river networks increases. Locations 
+closest to rivers display markedly higher flood probabilities, while the 
+event rate progressively declines for more distant areas.  
+
+\vspace{0.1cm}
+
+These findings suggest that proximity to rivers contributes to flood risk in a
+probabilistic manner and supports the **inclusion of `distance_to_river_m` as a relevant explanatory variable** 
+in the subsequent logistic regression models, despite its limited standalone 
+discriminative power.
+
+\vspace{0.1cm}
+
+After analyzing topographic and hydrological proximity variables, we now 
+examine the distribution of recent rainfall conditional on flood occurrence.
+
+```{r}
+# Distribution of rainfall over the last 7 days by flood occurrence
+ggplot(
+  TrainData,
+  aes(x = flood_occurrence_current_event, y = rainfall_7d_mm)
+) +
+  geom_boxplot(fill = "skyblue", alpha = 0.6) +
+  labs(
+    title = "Rainfall over Last 7 Days by Flood Occurrence (Training Set)",
+    x = "Flood occurrence (current event)",
+    y = "Rainfall over last 7 days (mm)"
+  ) +
+  theme_minimal()
+```
+
+The distribution of rainfall accumulated over the previous seven days exhibits 
+a clear separation between flood and non-flood observations. Locations where a 
+flood event occurred show substantially higher median rainfall levels and a 
+generally upward-shifted distribution compared to non-flood locations.
+
+\vspace{0.1cm}
+
+This pattern indicates a strong positive association between recent rainfall 
+intensity and the probability of flood occurrence. While variability and extreme
+values are present in both groups, flood events are concentrated at markedly 
+higher rainfall levels, supporting the role of short-term precipitation as a key
+driver of flooding.
+
+\vspace{0.1cm}
+
+These findings provide strong empirical justification for 
+**including `rainfall_7d_mm` as an explanatory variable** in the 
+subsequent binomial GLM, where its effect can be formally quantified in terms 
+of changes in flood occurrence probability.
+
+\vspace{0.1cm}
+
+After analysing short-term precipitation through rainfall accumulated over the 
+previous seven days, we now examine the distribution of monthly accumulated 
+rainfall conditional on flood occurrence.
+
+```{r}
+# Distribution of monthly rainfall by flood occurrence
+ggplot(
+  TrainData,
+  aes(x = flood_occurrence_current_event, y = monthly_rainfall_mm)
+) +
+  geom_boxplot(fill = "skyblue", alpha = 0.6) +
+  labs(
+    title = "Monthly Rainfall by Flood Occurrence (Training Set)",
+    x = "Flood occurrence (current event)",
+    y = "Monthly rainfall (mm)"
+  ) +
+  theme_minimal()
+```
+
+The distribution of monthly accumulated rainfall exhibits a clear separation 
+between flood and non-flood observations. While both groups display 
+right-skewed distributions with some extreme values, the upward shift of the 
+entire distribution for flood observations suggests that monthly rainfall 
+captures longer-term hydrological saturation effects that complement short-term
+rainfall indicators. This systematic difference supports the 
+**inclusion of `monthly_rainfall_mm` as a key explanatory variable** in the 
+subsequent logistic regression models.
+
+\vspace{0.1cm}
+
+After analysing key continuous predictors, we now examine how different 
+categorical variables are distributed across flood and non-flood observations. 
+For categorical predictors, the goal is not to assess linear trends, but to 
+identify whether certain categories are disproportionately associated with 
+flood occurrence. Such differences provide insight into potential structural or 
+environmental risk factors and inform the interpretation of coefficients in the 
+logistic regression model.
+
+```{r}
+# Distribution of land cover by flood occurrence
+ggplot(TrainData, aes(x = landcover, fill = flood_occurrence_current_event)) +
+  geom_bar(position = "fill", alpha = 0.8) +
+  scale_y_continuous(labels = scales::percent) +
+  labs(
+    title = "Flood Occurrence by Land Cover Type (Training Set)",
+    x = "Land cover type",
+    y = "Proportion within land cover",
+    fill = "Flood occurrence"
+  ) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 30, hjust = 1))
+```
+
+```{r}
+# Distribution of flood occurrence by urban/rural classification
+ggplot(TrainData, aes(x = urban_rural, fill = flood_occurrence_current_event)) +
+  geom_bar(position = "fill", alpha = 0.8) +
+  scale_y_continuous(labels = scales::percent) +
+  labs(
+    title = "Flood Occurrence by Urban–Rural Classification (Training Set)",
+    x = "Urban / Rural",
+    y = "Proportion within category",
+    fill = "Flood occurrence"
+  ) +
+  theme_minimal()
+```
+
+```{r}
+# Distribution of flood occurrence by soil type
+ggplot(TrainData, aes(x = soil_type, fill = flood_occurrence_current_event)) +
+  geom_bar(position = "fill", alpha = 0.8) +
+  scale_y_continuous(labels = scales::percent) +
+  labs(
+    title = "Flood Occurrence by Soil Type (Training Set)",
+    x = "Soil type",
+    y = "Proportion within soil type",
+    fill = "Flood occurrence"
+  ) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 30, hjust = 1))
+```
+
+- Regarding land cover, flood events are observed across all categories, with 
+slightly higher proportions in land-cover types associated with reduced 
+infiltration or proximity to water bodies, such as wetlands and urban areas. 
+Although differences are not extreme, the non-uniform distribution suggests 
+that land cover may contribute to flood susceptibility through surface runoff 
+and land-use characteristics.
+
+- The urban–rural classification shows a marginally higher proportion of flood 
+occurrences in urban locations compared to rural ones. This pattern is 
+consistent with the presence of impervious surfaces and altered drainage 
+systems in urban environments, which can increase runoff accumulation during 
+heavy rainfall events.
+
+- For soil type, flood occurrence rates appear broadly similar across 
+categories, with only mild variation. Nevertheless, soils with lower 
+permeability, such as clay or peaty soils, exhibit slightly higher flood 
+proportions, which aligns with hydrological expectations regarding infiltration 
+capacity.
+
+## <span style="color:#1f77b4">Fitting Binomial Generalized Linear Models</span>
+
+### <span style="color:#1f77b4">Baseline Model: Intercept-Only Logistic Regression</span>
+
+As a starting point, we fit an intercept-only binomial Generalized Linear Model 
+to estimate the unconditional probability of flood occurrence. This baseline 
+model does not include any explanatory variables and serves as a reference
+against which more complex models can be compared.
+
+\vspace{0.1cm}
+
+Let \( Y_i \) denote the binary indicator of flood occurrence at location 
+\( i \), where  
+\( Y_i = 1 \) if a flood event occurred and \( Y_i = 0 \) otherwise. 
+The model assumes that
+\[
+Y_i \sim \text{Bernoulli}(p),
+\]
+where \( p = P(Y_i = 1) \) is constant across all observations.
+
+\vspace{0.1cm}
+
+Using a binomial Generalized Linear Model with a logistic link function, 
+the model is specified as
+\[
+\log\left(\frac{p}{1 - p}\right) = \beta_0,
+\]
+where \( \beta_0 \) is the intercept term. The estimated intercept 
+therefore corresponds to the log-odds of a flood event occurring in the 
+training data.
+
+\vspace{0.1cm}
+
+By applying the inverse logit transformation, the unconditional 
+flood probability is obtained as
+\[
+p = \frac{\exp(\beta_0)}{1 + \exp(\beta_0)}.
+\]
+
+\vspace{0.1cm}
+
+This baseline model provides a benchmark level of predictive performance and 
+establishes a reference point for evaluating the incremental explanatory power 
+of introducing covariates in subsequent logistic regression models.
+
+```{r}
+
+# Baseline intercept-only logistic regression
+glm_null <- glm(
+  flood_occurrence_current_event ~ 1,
+  data = TrainData,
+  family = binomial(link = "logit")
+)
+
+summary(glm_null)
+
+# Convert log-odds to probability
+p_hat <- plogis(coef(glm_null))
+p_hat
+```
+The intercept-only logistic regression model estimates an unconditional flood 
+occurrence probability of approximately 9.73%, which coincides with the 
+empirical event rate observed in the training data. This confirms the correct 
+specification of the binomial GLM and provides a baseline level of model fit 
+against which all subsequent models will be compared.
+
+### <span style="color:#1f77b4">Building Simple Logistic Regression Models</span>
+
+We next consider a series of simple binomial Generalized Linear Models, each 
+including a single explanatory variable. These models allow us to evaluate the 
+individual association between each predictor and the probability of flood 
+occurrence, while maintaining a parsimonious specification.
+
+\vspace{0.1cm}
+
+For each predictor, we estimate a binomial GLM with a logistic link function 
+and compare its fit to the intercept-only baseline model. This stepwise approach
+provides insight into the marginal explanatory power of individual covariates 
+and facilitates the interpretation of regression coefficients in terms of 
+log-odds and odds ratios.
+
+Let \( Y_i \) denote the binary indicator of flood occurrence at 
+location \( i \), and let \( x_i \) be a single explanatory variable. The model 
+is specified as
+
+\[
+Y_i \sim \text{Bernoulli}(p_i),
+\qquad
+\log\left(\frac{p_i}{1 - p_i}\right) = \beta_0 + \beta_1 x_i.
+\]
+
+Here, \( \beta_1 \) represents the change in the log-odds of flood occurrence 
+associated with a one-unit increase in the predictor \( x_i \). Positive values
+of \( \beta_1 \) indicate an increased probability of flood occurrence, 
+while negative values indicate a reduced probability.
+
+\vspace{0.1cm}
+
+We begin the sequence of simple logistic regression models by considering 
+`elevation_m` as the sole explanatory variable.
+
+```{r}
+# Simple logistic regression with elevation only
+glm_elev <- glm(
+  flood_occurrence_current_event ~ elevation_m,
+  data   = TrainData,
+  family = binomial(link = "logit")
+)
+
+summary(glm_elev)
+
+# Odds ratios and 95% confidence intervals
+exp(cbind(
+  OR  = coef(glm_elev),
+  confint(glm_elev)
+))
+```
+We can extract the following conclusions:
+
+- Elevation is a statistically significant predictor of flood occurrence 
+($p < 10^{-9}$), with a negative effect on the probability of flooding.
+  
+- The estimated odds ratio for `elevation_m` is 
+0.9994 (95\% CI: [0.99924, 0.99959]), indicating that higher elevations are 
+associated with lower flood risk.
+  
+- Although the effect per meter is small, cumulative elevation differences 
+translate into substantial changes in flood probability.
+
+- The model improves upon the intercept-only baseline, as evidenced by a 
+reduction in deviance and AIC.
+
+- These results are consistent with hydrological theory and confirm elevation 
+as a relevant explanatory variable for flood occurrence.
+
+We now fit a simple logistic regression model using `distance_to_river_m` as 
+the sole explanatory variable to assess its effect on the probability of flood 
+occurrence.
+
+```{r}
+# Simple logistic regression with distance to nearest river
+glm_river <- glm(
+  flood_occurrence_current_event ~ distance_to_river_m,
+  data   = TrainData,
+  family = binomial(link = "logit")
+)
+
+summary(glm_river)
+
+# Odds ratios with 95% confidence intervals
+exp(cbind(
+  OR = coef(glm_river),
+  confint(glm_river)
+))
+```
+
+The simple logistic regression model using `distance_to_river_m` as
+the sole predictor shows a strong and statistically significant association
+with flood occurrence:
+
+- The estimated coefficient for `distance_to_river_m` is negative and
+highly significant ($p < 2 \times 10^{-16}$), indicating that flood probability 
+decreases as distance from the nearest river increases.
+
+- The odds ratio is approximately $0.99985$ per additional meter, implying a 
+small effect at the unit level, but a substantial cumulative effect over 
+hundreds or thousands of meters.
+
+- Compared to the intercept-only model, the residual deviance decreases 
+markedly and the AIC is substantially lower, indicating a clear improvement 
+in model fit.
+
+We now consider short-term rainfall (7-day accumulation) and longer-term 
+rainfall (monthly accumulation) as explanatory variables, fitting separate 
+logistic regression models to assess and compare their individual contributions
+to the probability of flood occurrence.
+
+```{r}
+
+# Simple logistic regression with rainfall over the last 7 days
+glm_rain7 <- glm(
+  flood_occurrence_current_event ~ rainfall_7d_mm,
+  data   = TrainData,
+  family = binomial(link = "logit")
+)
+
+summary(glm_rain7)
+
+# Odds ratios and 95% confidence intervals
+exp(cbind(
+  OR  = coef(glm_rain7),
+  confint(glm_rain7)
+))
+```
+
+```{r}
+
+# Simple logistic regression with monthly rainfall
+glm_rain_month <- glm(
+  flood_occurrence_current_event ~ monthly_rainfall_mm,
+  data   = TrainData,
+  family = binomial(link = "logit")
+)
+
+summary(glm_rain_month)
+
+# Odds ratios and 95% confidence intervals
+exp(cbind(
+  OR  = coef(glm_rain_month),
+  confint(glm_rain_month)
+))
+```
+According to the results, we can deduce that:
+
+- Both 7-day rainfall and monthly rainfall are highly statistically significant 
+predictors of flood occurrence (p < 2e-16), confirming the central role of
+precipitation in flood generation.
+
+- For rainfall over the last 7 days, the estimated odds ratio (≈ 1.014) 
+indicates that each additional millimetre of recent rainfall increases the odds 
+of a flood event by about 1.4%, holding all else constant.
+
+- For monthly rainfall, the odds ratio (≈ 1.009) implies a smaller but 
+cumulative effect, where sustained higher rainfall levels increase flood risk 
+through longer-term soil saturation and hydrological stress.
+
+- The monthly rainfall model achieves a substantially lower AIC (10315) than 
+the 7-day rainfall model (11381), indicating a better overall model fit
+when longer-term accumulated rainfall is used as the sole predictor.
+
+### <span style="color:#1f77b4">Building Multiple Logistic Regression Models</span>
+
+As a next step, we extend the simple logistic regression framework to a 
+multivariate setting by jointly including multiple explanatory variables within 
+the same binomial Generalized Linear Model. These multiple logistic regression 
+models allow us to assess the conditional effect of each predictor on the 
+probability of flood occurrence while controlling for the influence of the 
+remaining covariates.
+
+\vspace{0.1cm}
+
+By considering several predictors simultaneously, this approach enables us to 
+evaluate whether variables that are individually significant retain their 
+explanatory power once potential confounding effects are accounted for. 
+In addition, it allows us to examine how the magnitude and statistical 
+significance of regression coefficients change relative to the corresponding 
+univariate models.
+
+Let \(Y_i\) denote the binary indicator of flood occurrence at location \(i\), 
+and let \(\mathbf{x}_i = (x_{i1}, \ldots, x_{ip})\) denote a vector of 
+explanatory variables. The multiple logistic regression model is specified as
+\[
+Y_i \sim \text{Bernoulli}(p_i), \qquad
+\log\!\left(\frac{p_i}{1 - p_i}\right) = \beta_0 + \beta_1 x_{i1} + \cdots + 
+\beta_p x_{ip}.
+\]
+
+In this formulation, each coefficient \(\beta_j\) represents the change in the 
+log-odds of flood occurrence associated with a one-unit increase in
+predictor \(x_{ij}\), holding all other variables constant. This multivariate 
+perspective provides a more realistic representation of flood risk dynamics, 
+where topographical, hydrological, and meteorological factors act jointly 
+rather than in isolation.
+
+We begin by jointly considering topographical and hydrological proximity factors.
+Specifically, we include elevation and distance to the nearest river as
+simultaneous explanatory variables in order to assess their combined and
+conditional effects on the probability of flood occurrence.
+
+\vspace{0.1cm}
+
+This model allows us to evaluate whether each predictor retains explanatory
+power after accounting for the other and to examine potential changes in
+magnitude or significance relative to the corresponding univariate models.
+
+```{r}
+# Multiple logistic regression: elevation + distance to river
+glm_geo <- glm(
+  flood_occurrence_current_event ~ elevation_m + distance_to_river_m,
+  data   = TrainData,
+  family = binomial(link = "logit")
+)
+
+summary(glm_geo)
+
+# Odds ratios and 95% confidence intervals
+exp(cbind(
+  OR = coef(glm_geo),
+  confint(glm_geo)
+))
+```
+According to the results, we can deduce that:
+
+- Both elevation and distance to the nearest river remain highly statistically
+significant predictors of flood occurrence (p < 2e-16) when included jointly
+in the model, indicating that each variable contributes independent explanatory
+information.
+
+- The estimated odds ratio for elevation_m (≈ 0.99942) confirms a negative
+association between elevation and flood risk, implying that higher elevations
+are associated with lower odds of flood occurrence, even after controlling for
+river proximity.
+
+- The odds ratio for distance_to_river_m (≈ 0.99985) indicates that increasing
+distance from the nearest river reduces flood risk, with a small per-metre
+effect that accumulates substantially over hundreds or thousands of metres.
+
+- Compared to the corresponding single-predictor models, the estimated
+coefficients remain stable in magnitude and significance, suggesting limited
+confounding between elevation and river proximity.
+
+- The multivariate model achieves a lower AIC (12602) than both univariate
+models, indicating an improved overall model fit and supporting the joint
+inclusion of topographical elevation and hydrological proximity as key
+determinants of flood occurrence.
+
+We now fit a multivariate binomial Generalized Linear Model that jointly
+incorporates topographic, hydrological proximity, and meteorological
+predictors. Specifically, elevation, distance to the nearest river, and
+short-term rainfall accumulation are included as explanatory variables.
+
+\vspace{0.1cm}
+
+This model allows us to evaluate the combined and independent contributions
+of terrain, river proximity, and recent precipitation to flood occurrence,
+while controlling for potential confounding effects among these key drivers.
+
+```{r}
+# Multivariate logistic regression:
+# elevation + distance to river + short-term rainfall
+glm_env_rain <- glm(
+  flood_occurrence_current_event ~
+    elevation_m +
+    distance_to_river_m +
+    rainfall_7d_mm,
+  data   = TrainData,
+  family = binomial(link = "logit")
+)
+
+summary(glm_env_rain)
+
+# Odds ratios and 95% confidence intervals
+exp(cbind(
+  OR = coef(glm_env_rain),
+  confint(glm_env_rain)
+))
+```
+According to the results, we can deduce that:
+
+- Although elevation, distance to river, and short-term rainfall are all
+individually and jointly statistically significant predictors, the combined
+model does not outperform the monthly rainfall–only model in terms of AIC.
+The substantially lower AIC obtained (10315) for the monthly rainfall model 
+indicates that long-term accumulated precipitation alone captures most of the
+information relevant for explaining flood occurrence in the data.
+
+- This result suggests that monthly rainfall acts as a dominant explanatory
+variable, effectively summarizing broader hydrological conditions, while the
+additional topographic and proximity variables provide limited incremental
+improvement in model fit once monthly precipitation is accounted for.
+
+We now consider a broader set of potential explanatory variables in order to 
+construct more complex logistic regression models. While it is well understood 
+that increasing the number of predictors does not necessarily lead to improved
+predictive performance, this exploratory step allows us to assess whether 
+additional environmental, socio-demographic, and infrastructural variables 
+provide complementary information beyond the core predictors identified earlier.
+
+**Note:** The variable `flood_risk_score` is not used as a predictor in the 
+GLM analysis because it is a derived composite index constructed from several 
+environmental and socio-hydrological variables. Including it would introduce 
+circularity and compromise the interpretability of the estimated effects on 
+flood occurrence probability.
+
+\vspace{0.1cm}
+
+We begin by fitting a multivariate binomial Generalized Linear Model that 
+incorporates key environmental and hydrological predictors previously identified
+as relevant in both the exploratory analysis and the linear regression task. 
+This model includes terrain elevation, proximity to rivers, short and 
+long-term rainfall accumulation, and local drainage conditions.
+
+
+```{r}
+glm_M1_env <- glm(
+  flood_occurrence_current_event ~
+    elevation_m +
+    distance_to_river_m +
+    rainfall_7d_mm +
+    monthly_rainfall_mm +
+    drainage_index,
+  data = TrainData,
+  family = binomial(link = "logit")
+)
+
+summary(glm_M1_env)
+
+exp(cbind(
+  OR = coef(glm_M1_env),
+  confint(glm_M1_env)
+))
+```
+
+We next extend the environmental–hydrological model by incorporating remotely 
+sensed indices related to vegetation cover and surface water presence.
+
+```{r}
+glm_M2_env_veg <- glm(
+  flood_occurrence_current_event ~
+    elevation_m +
+    distance_to_river_m +
+    rainfall_7d_mm +
+    monthly_rainfall_mm +
+    drainage_index +
+    ndvi +
+    ndwi,
+  data = TrainData,
+  family = binomial(link = "logit")
+)
+
+summary(glm_M2_env_veg)
+
+exp(cbind(
+  OR = coef(glm_M2_env_veg),
+  confint(glm_M2_env_veg)
+))
+```
+
+We now consider a comprehensive mixed-effects logistic regression model that 
+combines continuous environmental, hydrological, and human exposure variables 
+with categorical land-use and spatial classification factors. Land cover type, 
+soil type, and urban–rural classification are included to capture structural 
+differences in flood susceptibility across locations.
+
+```{r}
+glm_M4_full <- glm(
+  flood_occurrence_current_event ~
+    elevation_m +
+    distance_to_river_m +
+    rainfall_7d_mm +
+    monthly_rainfall_mm +
+    drainage_index +
+    population_density_per_km2 +
+    built_up_percent +
+    infrastructure_score +
+    landcover +
+    soil_type +
+    urban_rural,
+  data = TrainData,
+  family = binomial(link = "logit")
+)
+
+summary(glm_M4_full)
+
+exp(cbind(
+  OR = coef(glm_M4_full),
+  confint(glm_M4_full)
+))
+```
+Finally, we explore a targeted interaction model motivated by hydrological 
+theory. Specifically, we include interactions between precipitation intensity 
+and drainage capacity, as well as between short-term rainfall and river 
+proximity. These interactions allow the effect of rainfall on flood occurrence
+to vary depending on local drainage conditions and hydrological connectivity.
+
+```{r}
+glm_M5_interact <- glm(
+  flood_occurrence_current_event ~
+    elevation_m +
+    distance_to_river_m +
+    rainfall_7d_mm +
+    monthly_rainfall_mm +
+    drainage_index +
+    rainfall_7d_mm:distance_to_river_m +
+    monthly_rainfall_mm:drainage_index,
+  data = TrainData,
+  family = binomial(link = "logit")
+)
+
+summary(glm_M5_interact)
+
+exp(cbind(
+  OR = coef(glm_M5_interact),
+  confint(glm_M5_interact)
+))
+```
+
+To facilitate interpretation, we summarise the fitted models in terms of their 
+residual deviance, Akaike Information Criterion (AIC), and the percentage 
+improvement in deviance relative to the null (intercept-only) model. The 
+percentage improvement quantifies how much of the unexplained variability in 
+flood occurrence is reduced by each model compared to the baseline with no 
+predictors.
+
+
+```{r}
+null_dev <- glm_null$deviance
+
+model_comparison <- tibble(
+  Model = c(
+    "Null (Intercept-only)",
+    "Elevation",
+    "Distance to river",
+    "Rainfall (7-day)",
+    "Rainfall (monthly)",
+    "Elevation + Distance",
+    "Elevation + Distance + Rainfall (7-day)",
+    "Env + Hydro (Elev + Dist + Rain + Drainage)",
+    "Env + Hydro + Vegetation",
+    "Comprehensive model (Env + Socio + Categorical)",
+    "Env + Hydro + Interactions"
+  ),
+  Predictors = c(
+    0, 1, 1, 1, 1, 2, 3, 5, 7, 11, 7
+  ),
+  Residual_Deviance = c(
+    glm_null$deviance,
+    glm_elev$deviance,
+    glm_river$deviance,
+    glm_rain7$deviance,
+    glm_rain_month$deviance,
+    glm_geo$deviance,
+    glm_env_rain$deviance,
+    glm_M1_env$deviance,
+    glm_M2_env_veg$deviance,
+    glm_M4_full$deviance,
+    glm_M5_interact$deviance
+  ),
+  Improvement_Percent = c(
+    0,
+    (null_dev - glm_elev$deviance) / null_dev * 100,
+    (null_dev - glm_river$deviance) / null_dev * 100,
+    (null_dev - glm_rain7$deviance) / null_dev * 100,
+    (null_dev - glm_rain_month$deviance) / null_dev * 100,
+    (null_dev - glm_geo$deviance) / null_dev * 100,
+    (null_dev - glm_env_rain$deviance) / null_dev * 100,
+    (null_dev - glm_M1_env$deviance) / null_dev * 100,
+    (null_dev - glm_M2_env_veg$deviance) / null_dev * 100,
+    (null_dev - glm_M4_full$deviance) / null_dev * 100,
+    (null_dev - glm_M5_interact$deviance) / null_dev * 100
+  ),
+  AIC = c(
+    AIC(glm_null),
+    AIC(glm_elev),
+    AIC(glm_river),
+    AIC(glm_rain7),
+    AIC(glm_rain_month),
+    AIC(glm_geo),
+    AIC(glm_env_rain),
+    AIC(glm_M1_env),
+    AIC(glm_M2_env_veg),
+    AIC(glm_M4_full), 
+    AIC(glm_M5_interact)
+  )
+)
+
+model_comparison_clean <- model_comparison %>%
+  mutate(
+    Residual_Deviance = round(Residual_Deviance, 1),
+    Improvement_Percent = round(Improvement_Percent, 1),
+    AIC = round(AIC, 1)
+  )
+
+kable(
+  model_comparison_clean,
+  align = "lcccc"
+)
+```
+
+Based on the comparative analysis of model fit and complexity summarised in the 
+table, we select two models for further interpretation and predictive assessment.
+
+\vspace{0.1cm} 
+
+The first selected model is the **Comprehensive model (Environmental + Socio-demographic + Categorical predictors)**. 
+This specification achieves the **lowest residual deviance (8100.8)** and the 
+**largest improvement over the null model (36.5%)**, indicating the strongest 
+overall explanatory power. Although it includes a relatively large number of 
+predictors, the corresponding **AIC (8140.8)** is the lowest among all 
+considered models, suggesting that the gain in goodness of fit more than 
+compensates for the increased model complexity. This model therefore represents 
+the best-performing specification in terms of global fit and information 
+criteria.
+
+\vspace{0.1cm} 
+
+As a complementary and more parsimonious alternative, we also select the 
+**Environmental + Hydrological model (Elevation, Distance to River, Rainfall, Drainage Index)**. 
+This model explains a substantial proportion of the null deviance 
+(**35.6% improvement**) while relying on a considerably smaller set of 
+predictors. Its residual deviance (8215.8) and AIC (8227.8) are only marginally 
+higher than those of more complex specifications, indicating that most of the 
+explanatory power is already captured by key environmental and hydrological 
+drivers.
+
+
+## <span style="color:#1f77b4">Interpretation of our Generalized Linear Models</span>
+
+In this section, we will interpret one of the selected binomial Generalized 
+Linear Model using marginal effects and odds ratios. 
+Rather than focusing solely on raw regression coefficients, we examine how the 
+predicted probability of flood occurrence varies with key explanatory variables,
+while holding the remaining covariates fixed at representative values.
+
+\vspace{0.1cm} 
+
+Based on the model comparison conducted in Section 2.6, we focus on the 
+**Environmental + Hydrological model**, which includes elevation, distance to 
+the nearest river, short-term rainfall (7-day accumulation), monthly rainfall
+and drainage conditions. 
+This model achieves a substantial improvement in goodness of fit relative to 
+the null model while maintaining a high level of interpretability and avoiding 
+unnecessary complexity.
+
+```{r}
+
+# First, we re-define our model
+glm_M1_env <- glm(
+  flood_occurrence_current_event ~ 
+    elevation_m +
+    distance_to_river_m +
+    rainfall_7d_mm +
+    monthly_rainfall_mm +
+    drainage_index,
+  data   = TrainData,
+  family = binomial(link = "logit")
+)
+
+# Elevation
+plot(effect("elevation_m", glm_M1_env),
+     main = "Effect of Elevation on Flood Probability",
+     ylab = "Predicted Probability of Flood")
+
+# Distance to river
+plot(effect("distance_to_river_m", glm_M1_env),
+     main = "Effect of Distance to River on Flood Probability",
+     ylab = "Predicted Probability of Flood")
+
+# 7-day rainfall
+plot(effect("rainfall_7d_mm", glm_M1_env),
+     main = "Effect of 7-Day Rainfall on Flood Probability",
+     ylab = "Predicted Probability of Flood")
+
+# Monthly rainfall
+plot(effect("monthly_rainfall_mm", glm_M1_env),
+     main = "Effect of Monthly Rainfall on Flood Probability",
+     ylab = "Predicted Probability of Flood")
+
+# Drainage index
+plot(effect("drainage_index", glm_M1_env),
+     main = "Effect of Drainage Index on Flood Probability",
+     ylab = "Predicted Probability of Flood")
+```
+According to the plots, we can deduce that:
+
+- **Elevation** shows a clear negative marginal effect: holding all other 
+variables constant, higher elevations are associated with a systematically 
+lower predicted probability of flood occurrence.
+
+- **Distance to the nearest river** also exhibits a strong negative effect, 
+with flood probability decreasing steadily as distance from river networks 
+increases, confirming the importance of hydrological proximity.
+
+- **Short-term rainfall (7-day accumulation)** has a strong positive and nearly
+linear marginal effect on flood probability, indicating that recent intense 
+precipitation sharply increases the likelihood of flooding.
+
+- **Monthly rainfall** displays a similarly strong positive effect, capturing 
+longer-term hydrological saturation processes that substantially raise flood 
+risk even after controlling for short-term rainfall.
+
+- **Drainage index** has a pronounced negative effect: locations with better 
+drainage capacity (higher index values) are associated with significantly lower 
+predicted flood probabilities.
+
+Overall, the marginal effects plots confirm that all five predictors 
+contribute meaningfully and in the expected directions to flood occurrence 
+risk, with precipitation variables exerting the strongest influence, followed 
+by drainage conditions and topographic–hydrological factors.
+
+## <span style="color:#1f77b4">Out-of-Sample Prediction and Model Performance Assessment</span>
+
+In this final section, we evaluate the predictive behaviour of the selected
+Generalized Linear Models on unseen data. Using the previously defined
+train–test split, we assess out-of-sample predictive performance and compute
+prediction intervals for the estimated flood occurrence probabilities.
+
+\vspace{0.1cm}
+
+For each selected model, we obtain predicted probabilities on the test set,
+construct approximate 95% confidence intervals on the response scale, and
+evaluate classification performance using a probability threshold. This allows
+us to assess both predictive uncertainty and practical classification accuracy.
+
+
+```{r}
+
+# ========================================
+# Model 1: Environmental + Hydrological
+# ========================================
+
+# First, we re-define our model
+glm_M1_env <- glm(
+  flood_occurrence_current_event ~ 
+    elevation_m +
+    distance_to_river_m +
+    rainfall_7d_mm +
+    monthly_rainfall_mm +
+    drainage_index,
+  data   = TrainData,
+  family = binomial(link = "logit")
+)
+
+# 1) Predicted probabilities + 95% CI (test set)
+
+# Predict on the linear predictor (log-odds scale)
+pred_link_M1 <- predict(
+  glm_M1_env,
+  newdata = TestData,
+  type    = "link",
+  se.fit  = TRUE
+)
+
+# 95% confidence intervals on the link scale
+crit <- 1.96
+link_fit <- pred_link_M1$fit
+link_lwr <- link_fit - crit * pred_link_M1$se.fit
+link_upr <- link_fit + crit * pred_link_M1$se.fit
+
+# Transform back to probability scale
+pred_M1 <- data.frame(
+  lower = glm_M1_env$family$linkinv(link_lwr),
+  prediction = glm_M1_env$family$linkinv(link_fit),
+  upper = glm_M1_env$family$linkinv(link_upr)
+)
+
+head(pred_M1)
+
+# 2) Classification performance (0.5 threshold)
+
+# Predicted probabilities
+prob_M1 <- predict(glm_M1_env, TestData, type = "response")
+
+# Class prediction using 0.5 threshold
+class_M1 <- ifelse(prob_M1 > 0.5, "Yes", "No")
+
+# Accuracy
+acc_M1 <- mean(class_M1 == TestData$flood_occurrence_current_event)
+acc_M1
+```
+
+```{r}
+# ====================================================
+# Model 2: Comprehensive (Env + Socio + Categorical)
+# ====================================================
+
+
+# First, we re-define our model
+glm_M4_full <- glm(
+  flood_occurrence_current_event ~
+    elevation_m +
+    distance_to_river_m +
+    rainfall_7d_mm +
+    monthly_rainfall_mm +
+    drainage_index +
+    population_density_per_km2 +
+    built_up_percent +
+    infrastructure_score +
+    landcover +
+    soil_type +
+    urban_rural,
+  data   = TrainData,
+  family = binomial(link = "logit")
+)
+
+# 1) Predicted probabilities + 95% CI (test set)
+
+pred_link_M4 <- predict(
+  glm_M4_full,
+  newdata = TestData,
+  type    = "link",
+  se.fit  = TRUE
+)
+
+link_fit <- pred_link_M4$fit
+link_lwr <- link_fit - crit * pred_link_M4$se.fit
+link_upr <- link_fit + crit * pred_link_M4$se.fit
+
+pred_M4 <- data.frame(
+  lower = glm_M4_full$family$linkinv(link_lwr),
+  prediction = glm_M4_full$family$linkinv(link_fit),
+  upper = glm_M4_full$family$linkinv(link_upr)
+)
+
+head(pred_M4)
+
+# 2) Classification performance (0.5 threshold)
+
+prob_M4 <- predict(glm_M4_full, TestData, type = "response")
+class_M4 <- ifelse(prob_M4 > 0.5, "Yes", "No")
+
+acc_M4 <- mean(class_M4 == TestData$flood_occurrence_current_event)
+acc_M4
+
+
+```
+
+We can conclude that:
+
+- Both selected models produce sensible out-of-sample predicted probabilities 
+on the test set, together with 95% confidence intervals on the response scale.
+- Using a 0.5 classification threshold, the test accuracy is **very similar** 
+for both models:  
+  Model 1 (Env + Hydro): **0.9118**  
+  Model 2 (Comprehensive): **0.9114**
+- The difference in accuracy between the two models is **negligible**, and 
+Model 1 is marginally higher despite being simpler.
+- Given the strong class imbalance (≈ 10% “Yes”), accuracy values around 
+0.91 should be interpreted carefully: a naïve “always predict No” rule 
+would already achieve close to the non-event rate (≈ 0.89). Therefore, the 
+main value of these models is better captured by probabilistic outputs 
+(and, ideally, metrics beyond accuracy).
+- Overall, Model 1 provides a competitive out-of-sample performance while 
+remaining more interpretable, whereas Model 2 does not yield a meaningful 
+accuracy gain despite higher complexity.
+
