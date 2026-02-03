@@ -67,6 +67,5 @@ The entire analysis is implemented in an **R Markdown (`.Rmd`) file**, which:
 
 ## Repository Structure
 ├── README.md                 
-├── HW1_s100568756.rmd                             
-├── HW1_s100568756.html                           
+├── HW1_s100568756.rmd                                                     
 └── sri_lanka_flood_risk_dataset_25000.csv    
